@@ -1,0 +1,27 @@
+# 构建上下文瘦身：绝不把真实凭据 / 抓包 / 开发产物带进镜像
+.git
+.github
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+# 真实凭据文件（模板 config.yaml.example 保留，用于生成镜像内初始配置）
+config.yaml
+secrets/
+*.har
+*.key
+AGENTS.md
+DOCS.md
+tests/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+Dockerfile
+.dockerignore

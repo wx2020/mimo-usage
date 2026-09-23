@@ -48,6 +48,23 @@ vim config.yaml   # 至少填 credentials.serviceToken/deviceId/userId；
 ./run.sh          # 或 MIMO_CONFIG=./config.yaml python3 -m mimo_usage
 ```
 
+### Docker
+
+```bash
+docker build -t mimo-usage .
+docker run -d --name mimo-usage -p 8000:8000 mimo-usage
+```
+
+- 镜像内**已打入初始化配置文件** `/app/config.yaml`（由 `config.yaml.example` 生成，凭据留空），
+  容器默认经 `MIMO_CONFIG=/app/config.yaml` 加载。
+- 续登换发的凭证会**写回该文件**；想跨容器重建保留会话，把本机填好的 `config.yaml` 挂进去：
+
+  ```bash
+  docker run -d --name mimo-usage -p 8000:8000 -v "$PWD/config.yaml:/app/config.yaml" mimo-usage
+  ```
+
+- 也可全部用环境变量（`MIMO_SERVICE_TOKEN` 等，优先级高于 yaml），无需挂载配置文件。
+
 打开 <http://127.0.0.1:8000/dashboard>；API 示例：
 
 ```bash
