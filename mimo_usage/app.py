@@ -24,7 +24,7 @@ APP_NAME = "mimo_usage"
 DASHBOARD_COOKIE = "mimo_usage_key"
 DASHBOARD_COOKIE_MAX_AGE = 30 * 24 * 3600
 #: 静态资源版本号：与 __version__ 同步，配合 ?v= 让改版立即生效
-STATIC_VERSION = "0.3.5"
+STATIC_VERSION = "1.0.0"
 
 
 def normalise_path(raw: str) -> str:
