@@ -169,7 +169,7 @@ notes 结构（与 1.0.0 一致）：
 - `## What's Changed` —— 自动生成的提交清单（**唯一**列举提交的位置）
 - `## Feature` / `## Bugfix` —— **人工归纳**的功能与修复说明，用 `--notes FILE` 传入
   （避免与提交清单重复）
-- `## Contributors`
+- **不写 `## Contributors`** —— GitHub 发布页会自动渲染该区块，手写会重复
 
 ```bash
 # 人工归纳段落示例（notes.md）
