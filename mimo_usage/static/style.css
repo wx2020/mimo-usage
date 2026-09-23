@@ -19,7 +19,7 @@
   --banner-text: #9a3412;
   --hero-border: #ffd9c2;
   --hero-from: #fffaf6;
-  --stack-sep: rgba(255, 255, 255, 0.72);   /* 堆叠段之间的分隔缝 */
+  --grid-line: rgba(0, 0, 0, 0.10);         /* 图表网格虚线 */
 }
 
 /* 跟随设备外观：系统深色时切到暗色变量（图表模型配色由 JS 侧同步切换） */
@@ -42,7 +42,7 @@
     --banner-text: #ffc09a;
     --hero-border: #3a2a20;
     --hero-from: #221d1a;
-    --stack-sep: rgba(255, 255, 255, 0.22);   /* 深色下用淡亮缝，避免出现"黑点" */
+    --grid-line: rgba(255, 255, 255, 0.10);
   }
 }
 
@@ -189,7 +189,7 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 .chart .plot-grid em {
   display: block;
   height: 0;
-  border-top: 1px dashed var(--border);
+  border-top: 1px dashed var(--grid-line);
 }
 .chart .cols {
   position: absolute;
@@ -215,23 +215,6 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   min-height: 2px;
 }
 .chart .col.zero > i { display: none; }
-/* 按模型堆叠柱：column-reverse 使先入段在最底，段高按 max 归一 */
-.chart .col.stack {
-  flex-direction: column-reverse;
-  justify-content: flex-start;
-  align-items: center;
-}
-.chart .col.stack > i {
-  width: 100%;
-  max-width: 28px;
-  min-height: 0;
-  border-radius: 0;
-  /* 段间 1px 分隔缝：半透明（深色下不再渲染成黑点），且不占布局高度 */
-  box-shadow: 0 1px 0 0 var(--stack-sep);
-}
-/* 最底段的分隔缝会落到柱子外面，去掉 */
-.chart .col.stack > i:first-child { box-shadow: none; }
-.chart .col.stack > i:last-child { border-radius: 4px 4px 0 0; }
 /* 图例 */
 .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 10px 0 0; }
 .legend span { display: flex; align-items: center; gap: 6px; }

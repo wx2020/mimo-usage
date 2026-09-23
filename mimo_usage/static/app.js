@@ -371,6 +371,8 @@ const DARK_MODEL_PALETTES = {
 const MODEL_OTHER_LIGHT = "#cbd2dc";
 const MODEL_OTHER_DARK = "#4d5663";
 const MODEL_COLOR_SLOTS = 6;
+//: 段高不足 ~1px（0.6% of max）就不渲染，避免 0.2px 发丝线伪影
+const MIN_SEGMENT_RATIO = 0.006;
 
 const prefersDark = () =>
   !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -426,31 +428,41 @@ function renderTokenTrend(points) {
   cols.className = "cols";
   for (const point of points) {
     const col = document.createElement("div");
-    col.className = point.value > 0 ? "col stack" : "col zero";
+    col.className = point.value > 0 ? "col" : "col zero";
     col.title = point.title;
     if (point.value > 0) {
       const perModel = new Map((point.models || []).map(({ model, tokens }) => [model, tokens]));
-      // 先入者在底（column-reverse）：Top-6 按占比降序，最深色在最底
+      // 按占比降序（rank0 最深）收集可见分层：低于 ~1px 的模型不画（数值仍在悬浮提示里）
+      const bands = [];
       for (const { model, rank } of colored) {
         const tokens = perModel.get(model) || 0;
-        if (tokens <= 0) continue;
-        const segment = document.createElement("i");
-        segment.style.height = ((tokens / max) * 100).toFixed(3) + "%";
-        segment.style.background = colorForRank(rank, coloredCount);
-        // 太薄的段不画分隔缝（否则浅色下是道白口、深色下就是柱顶一个"黑点"）
-        if (tokens / max < 0.02) segment.style.boxShadow = "none";
-        col.append(segment);
+        if (tokens <= 0 || tokens / max < MIN_SEGMENT_RATIO) continue;
+        bands.push({ color: colorForRank(rank, coloredCount), tokens });
       }
-      // 「其他（第 7 名及以后）」并为一段中性灰
       if (rest.length) {
         const otherTokens = rest.reduce((acc, item) => acc + (perModel.get(item.model) || 0), 0);
-        if (otherTokens > 0) {
-          const segment = document.createElement("i");
-          segment.style.height = ((otherTokens / max) * 100).toFixed(3) + "%";
-          segment.style.background = otherColor();
-          if (otherTokens / max < 0.02) segment.style.boxShadow = "none";
-          col.append(segment);
+        if (otherTokens > 0 && otherTokens / max >= MIN_SEGMENT_RATIO) {
+          bands.push({ color: otherColor(), tokens: otherTokens });
         }
+      }
+      if (bands.length) {
+        const rendered = bands.reduce((acc, band) => acc + band.tokens, 0);
+        const bar = document.createElement("i");
+        bar.style.height = ((rendered / max) * 100).toFixed(3) + "%";
+        if (bands.length === 1) {
+          bar.style.background = bands[0].color;
+        } else {
+          // 单个元素 + 硬切色带：避开多段 div 的亚像素缝隙（深色下会露出底色成"黑线"）
+          let acc = 0;
+          const stops = bands.map((band) => {
+            const from = (acc / rendered) * 100;
+            acc += band.tokens;
+            const to = (acc / rendered) * 100;
+            return `${band.color} ${from.toFixed(4)}% ${to.toFixed(4)}%`;
+          });
+          bar.style.background = `linear-gradient(to top, ${stops.join(", ")})`;
+        }
+        col.append(bar);
       }
     }
     cols.append(col);
