@@ -12,7 +12,12 @@ server:
   workers: 1
   debug: false
   accessLog: true
-  apiKey: ""              # 留空 = 不鉴权；设置后看板/API 用它（X-API-Key / ?key=）
+  # ---- 面板与 API 访问（看板调用 /api/* 的鉴权方式）----
+  # 留空 = 不鉴权（默认，仅适合本机/内网）；公网部署务必设置。
+  # 配置后：浏览器访问 <dashboardPath>?key=<key> 打开一次，前端把密钥存入 localStorage
+  #   并抹掉地址栏参数，之后 /api/* 自动带 X-API-Key；脚本可直接用 X-API-Key 头或 ?key=。
+  # cookie 为 mimo_usage_key、Path 仅看板路径，不会发往 /api/*；/healthz 不鉴权。
+  apiKey: ""
   dashboardPath: /dashboard
   dashboardRefreshSeconds: 30
 
