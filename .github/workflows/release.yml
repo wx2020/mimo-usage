@@ -1,8 +1,10 @@
 name: Release
 
-# 推送 v* tag 即自动创建/更新 GitHub Release：
-#   body 优先取 annotated tag 的 message（由 scripts/release.py 写入，三处同步之一）；
-#   tag 无 message 时退回按提交历史自动生成。
+# 推送 v* tag 即自动创建/更新 GitHub Release。
+# body 取值优先级：
+#   ① tag 指向提交的 body（scripts/release.py 写入的完整 notes）
+#   ② tag message（仅当它含 "## " 小节时才用；新流程的 tag message 是简短一句）
+#   ③ 按提交历史自动生成
 on:
   push:
     tags:
@@ -17,25 +19,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # 生成 notes 需要完整历史
+          fetch-depth: 0          # 生成 notes / 读提交 body 都需要完整历史
 
       - name: Build release notes
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          # ① annotated tag 的 message（release 脚本会写；lightweight tag 则为空）
-          git tag -l --format='%(contents)' "$tag" > /tmp/release-body.md
-          if [ ! -s /tmp/release-body.md ]; then
-            # ② 退回：按 conventional commits 自动生成
+          body_file=/tmp/release-body.md
+          : > "$body_file"
+
+          # ① release 提交 body（发布脚本把完整 notes 写在这里）
+          git log -1 --format=%b "${tag}^{commit}" > "$body_file" 2>/dev/null || true
+
+          # ② 提交 body 为空：tag message 若像 notes（含 "## " 小节）则用它
+          if [ -z "$(tr -d '[:space:]' < "$body_file")" ]; then
+            git tag -l --format='%(contents)' "$tag" > "$body_file"
+            grep -q '^## ' "$body_file" || : > "$body_file"
+          fi
+
+          # ③ 仍为空：按提交历史生成
+          if [ -z "$(tr -d '[:space:]' < "$body_file")" ]; then
             prev="$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)"
             range="${prev:+${prev}..}${tag}"
             {
               echo "## What's Changed"
-              git log --reverse --pretty=format:'* %s (%h)' "$range"
+              git log --reverse --pretty=format:'* %s (%h) by @%an' "$range"
               echo
-            } > /tmp/release-body.md
+            } > "$body_file"
           fi
-          echo "notes 行数：$(wc -l < /tmp/release-body.md)"
+
+          echo "notes 行数：$(wc -l < "$body_file")"
 
       - name: Create or update GitHub Release
         env:

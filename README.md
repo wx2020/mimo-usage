@@ -157,12 +157,12 @@ python3 scripts/release.py 1.1.0 --push             # 提交 + 打 tag + 推送
 python3 scripts/release.py 1.1.0 --push --github    # 再用 API 建 GitHub Release
 ```
 
-脚本把 release notes 同步到三处，避免"只有 tag 有 notes、release 提交却是空的"：
+脚本产出的三处，各司其职：
 
-1. **release 提交 body**（`--cleanup=verbatim`，否则 `#` 开头的标题会被删）
-2. **annotated tag message**（同样 `verbatim`）
-3. **GitHub Release body**——**推 tag 后由 `.github/workflows/release.yml` 自动创建/更新**
-   （body 优先取 tag message，无则按提交历史生成），无需本地 `--github`
+1. **release 提交 body** = 完整 notes（`--cleanup=verbatim`，否则 `#` 开头的标题会被删）
+2. **annotated tag message** = 简短一句 `Release vX.Y.Z`（没人细看，不放长文）
+3. **GitHub Release body** = 完整 notes——**推 tag 后由 `.github/workflows/release.yml` 自动创建/更新**，
+   正文优先取 ①（tag 指向提交的 body），为空再用 tag message（须含 `## ` 小节）或按提交历史生成
 
 notes 结构（与 1.0.0 一致）：
 

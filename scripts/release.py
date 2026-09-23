@@ -7,10 +7,11 @@
     python3 scripts/release.py 1.1.0 --push             # 再推送 main 与 tag
     python3 scripts/release.py 1.1.0 --push --github    # 再用 API 建 GitHub Release
 
-约定（三处同步，避免"只有 tag 有 notes、commit 却空着"）：
-    ① release 提交 body = notes（`--cleanup=verbatim`，否则 `#` 开头的标题会被删）
-    ② annotated tag message = notes（同样 `verbatim`）
-    ③ GitHub Release body = tag message（`--github`，需 OpenChamber 的 github-auth.json token）
+产出（各司其职）：
+    ① **release 提交 body** = 完整 notes（`--cleanup=verbatim`，否则 `#` 开头的标题会被删）
+    ② **annotated tag message** = 简短一句 `Release vX.Y.Z`（没人细看，不写长文）
+    ③ **GitHub Release body** = 完整 notes：.github/workflows/release.yml 从 ①（tag 指向
+       提交的 body）读取；本地 `--github` 也可直接建（需 OpenChamber 的 github-auth.json token）
 
 notes 结构：`## What's Changed`（自动=提交清单）+ 人工归纳的 `## Feature` / `## Bugfix`
 （用 `--notes FILE` 提供，不重复提交列表）。**不要手写 Contributors**：GitHub 发布页自动渲染该区块。
@@ -191,10 +192,11 @@ def main() -> None:
     print(f"  ✓ 已提交（body {len(notes.splitlines())} 行）")
 
     tag_file = ROOT / ".git" / "MIMO_RELEASE_TAGMSG"
-    tag_file.write_text(notes + "\n", encoding="utf-8")
+    # tag message 只留一句（没人细看）；详细 notes 在 release 提交 body 与 GitHub Release
+    tag_file.write_text(f"Release {tag}\n", encoding="utf-8")
     run("git", "tag", "-a", "--cleanup=verbatim", "-F", str(tag_file), tag)
     tag_file.unlink(missing_ok=True)
-    print(f"  ✓ 已打 tag {tag}")
+    print(f"  ✓ 已打 tag {tag}（message 简短：Release {tag}）")
 
     if args.push:
         run("git", "push", "origin", "main")
