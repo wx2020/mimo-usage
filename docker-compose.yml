@@ -1,0 +1,24 @@
+# mimo-usage 示例 compose。
+# 镜像已内置初始化配置文件 /app/config.yaml（凭据留空），首次使用：
+#   cp config.yaml.example config.yaml   # 再填凭据；该文件含密钥、已被 .gitignore，勿提交
+#   docker compose up -d
+# 打开 http://127.0.0.1:8000/dashboard
+services:
+  mimo-usage:
+    image: ghcr.io/wx2020/mimo-usage:latest
+    # 想本地构建就把上一行注释掉，改用：
+    # build: .
+    container_name: mimo-usage
+    restart: unless-stopped
+    ports:
+      # 宿主端口:容器端口（容器端口由 MIMO_PORT 决定，默认 8000）
+      - "8000:8000"
+    environment:
+      MIMO_CONFIG: /app/config.yaml
+      # 公网部署务必开启访问密钥：浏览器用 /dashboard?key=... 打开一次即可
+      # MIMO_API_KEY: "change-me"
+      # 也可完全用环境变量提供凭据（优先级高于 yaml），此时可删掉下面的 volumes：
+      # MIMO_SERVICE_TOKEN: ""
+    volumes:
+      # 持久化配置与续登凭证。注意：宿主文件须先存在，否则 Docker 会创建同名目录。
+      - ./config.yaml:/app/config.yaml
