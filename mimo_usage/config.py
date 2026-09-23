@@ -8,8 +8,8 @@
 * 凭据中的**密码明文**只允许在 ``credentials.password`` 出现一次：服务**加载时立即**
   换算为 ``passwordMd5``（登录所需，MD5 大写）与 ``passwordBcrypt``（``$2b$10$…``
   bcrypt，格式同 ``$2a$`` 示例族）并**从文件删除明文**——之后磁盘上不再有明文密码。
-* ``*_FILE`` 文件后端仍然支持（与 yaml 互不冲突；env > file > yaml 为 ``_Secret``
-  取值顺序中的前两级）。
+* ``*_FILE`` 文件后端仍然支持；``_Secret.get()`` 实序见下——**设了 ``*_FILE`` 则
+  文件 > 内联 env > 无（yaml 不参与读取）；未设则 内联 env > yaml > 无**。
 """
 
 from __future__ import annotations
@@ -349,7 +349,14 @@ class YamlStore:
 
 
 class _Secret:
-    """一个凭据位：内联 env > ``*_FILE`` 文件 > config.yaml，支持写回落盘。"""
+    """一个凭据位（读 ``get``，与测试 ``test_secret_prefers_file_*`` 一致）：
+
+    * 设了 ``*_FILE``（path 非空）：**文件 > 内联 env > 无**——yaml 不参与读取；
+      文件缺失/为空时回落内联，两者皆无则 ``None``（不会读 yaml）。
+    * 未设 path：**内联 env > yaml > 无**。
+    * 写回 ``set``：有 yaml store 则**只写 yaml**（原子、0600），否则写文件，再否则改内存；
+      store 与 path 并存时写 yaml、读文件——续登新值在文件未同步前对 ``get`` 不可见。
+    """
 
     __slots__ = ("name", "_inline", "_path", "_mtime", "_cached", "_checked_at", "_store", "_store_key")
 
