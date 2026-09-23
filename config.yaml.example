@@ -1,0 +1,56 @@
+# mimo-usage 主配置（复制为 config.yaml 后填写；该文件含凭据，git 已忽略、chmod 600）
+# 优先级：环境变量 > 本文件 > 默认值。启动：./run.sh（存在 config.yaml 时自动加载）
+#
+# credentials.password（明文密码）只写一次：服务首次加载会立即换算为
+# passwordMd5（登录用 MD5 大写）+ passwordBcrypt（$2b$10$ bcrypt）并删除明文，
+# 之后磁盘上不再有明文密码；换密码 = 再写一次 password 启动即可。
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  workers: 1
+  debug: false
+  accessLog: true
+  apiKey: ""              # 留空 = 不鉴权；设置后看板/API 用它（X-API-Key / ?key=）
+  dashboardPath: /dashboard
+  dashboardRefreshSeconds: 30
+
+upstream:
+  baseUrl: https://platform.xiaomimimo.com
+  accountBaseUrl: https://account.xiaomi.com
+  sid: api-platform
+  requestTimeout: 15
+  connectTimeout: 5
+  retries: 2
+  retryBackoff: 0.3
+
+cache:
+  usageTtl: 300
+  detailTtl: 600
+  billTtl: 3600
+  tokenPlanTtl: 600
+  accountTtl: 3600
+  staleTtl: 600
+  cacheMaxEntries: 256
+  refreshMinInterval: 30
+  summaryMaxAge: 300
+
+reauth:
+  cooldownSeconds: 300            # 免密续登失败冷却
+  passwordCooldownSeconds: 3600   # 密码登录失败/验证码冷却（防风控连击）
+
+credentials:
+  # ---- 平台会话（续登成功自动回写本文件）----
+  serviceToken: ""        # api-platform_serviceToken 值（浏览器 Cookie 复制，含引号可保留）
+  passToken: ""           # account.xiaomi.com 的 passToken（30 天免密根；密码登录成功会自动刷新）
+  deviceId: ""            # wb_xxx（account.xiaomi.com Cookie）
+  userId: ""              # 数字用户 Id，如 100000001
+  ph: ""                  # api-platform_ph（/sts 下发；POST usage/detail/list 带 ph cookie 时必带 query）
+  slh: ""                 # api-platform_slh（/sts 下发）
+
+  # ---- 密码续登材料（三级降级的第③级；免密失效时兜底）----
+  username: ""            # 登录账号：手机号，不带 +86（如 00000000000）
+  deviceFingerprint: ""   # 密码续登必填：浏览器登录时抓到的指纹（FingerprintJS visitorId）
+  # password: ""          # ← 明文密码只写这一次；首次加载后自动变成下面两项并被删除
+  # passwordMd5: ""       # MD5(密码) 大写（登录 hash；服务自动写入）
+  # passwordBcrypt: ""    # $2b$10$…（服务自动写入；与 $2a$ 同族格式）

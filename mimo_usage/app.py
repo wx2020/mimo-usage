@@ -1,0 +1,207 @@
+"""Sanic application factory."""
+
+from __future__ import annotations
+
+import secrets
+from pathlib import Path
+
+import httpx
+from sanic import Request, Sanic
+from sanic.exceptions import SanicException
+from sanic.response import BaseHTTPResponse, html, redirect
+
+from . import api
+from .api import json_response
+from .cache import IntervalGate, TTLCache
+from .client import MimoClient, MimoError, MissingCredentialError
+from .config import CredentialStore, Settings
+from .logging_filters import install_secret_filter
+from .metrics import Metrics
+from .timerange import BadRequest
+
+STATIC_DIR = Path(__file__).parent / "static"
+APP_NAME = "mimo_usage"
+DASHBOARD_COOKIE = "mimo_usage_key"
+DASHBOARD_COOKIE_MAX_AGE = 30 * 24 * 3600
+#: 静态资源版本号：与 __version__ 同步，配合 ?v= 让改版立即生效
+STATIC_VERSION = "0.3.5"
+
+
+def normalise_path(raw: str) -> str:
+    """``dashboard`` / ``/dashboard/`` -> ``/dashboard`` (``/`` stays ``/``)."""
+    path = "/" + raw.strip().strip("/")
+    return "/" if path == "/" else path
+
+
+def create_app(
+    settings: Settings | None = None,
+    *,
+    name: str = APP_NAME,
+    credentials: CredentialStore | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> Sanic:
+    """Build the app.
+
+    ``transport`` is injectable so tests can stand in a fake upstream without
+    touching the network; ``credentials`` likewise for tests.
+    """
+    settings = settings or Settings.from_env()
+    credentials = credentials or CredentialStore.from_env()
+    dashboard_path = normalise_path(settings.dashboard_path)
+    app = Sanic(name)
+    app.config.FALLBACK_ERROR_FORMAT = "json"
+    app.config.DEBUG = settings.debug
+    app.config.ACCESS_LOG = settings.access_log
+    app.config.KEEP_ALIVE = True
+    app.config.KEEP_ALIVE_TIMEOUT = 65
+    app.config.REQUEST_TIMEOUT = max(int(settings.request_timeout) + 5, 30)
+    app.config.RESPONSE_TIMEOUT = max(int(settings.request_timeout) + 5, 30)
+    app.config.GRACEFUL_SHUTDOWN_TIMEOUT = 5
+
+    metrics = Metrics()
+    app.ctx.settings = settings
+    app.ctx.metrics = metrics
+    app.ctx.credentials = credentials
+    app.ctx.client = MimoClient(settings, credentials, metrics=metrics, transport=transport)
+    app.ctx.caches = {
+        "usage": TTLCache(settings.usage_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries),
+        "detail": TTLCache(settings.detail_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries),
+        "bill": TTLCache(settings.bill_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries),
+        "tokenplan": TTLCache(
+            settings.token_plan_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries
+        ),
+        "account": TTLCache(
+            settings.account_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries
+        ),
+    }
+    app.ctx.refresh_gate = IntervalGate(settings.refresh_min_interval, max_entries=settings.cache_max_entries)
+
+    @app.before_server_start
+    async def _open_upstream(app: Sanic) -> None:
+        await app.ctx.client.start()
+        install_secret_filter()
+
+    @app.after_server_stop
+    async def _close_upstream(app: Sanic) -> None:
+        await app.ctx.client.close()
+
+    def presented_key(request: Request, *, allow_cookie: bool = False) -> str:
+        key = request.headers.get("x-api-key") or request.get_args().get("key") or ""
+        if not key and allow_cookie:
+            key = request.cookies.get(DASHBOARD_COOKIE) or ""
+        return key
+
+    def rejection(provided: str) -> BaseHTTPResponse:
+        missing = not provided
+        return json_response(
+            {"error": {"type": "forbidden" if missing else "unauthorized", "message": "未授权"}},
+            status=403 if missing else 401,
+        )
+
+    @app.on_request
+    async def _require_api_key(request: Request) -> BaseHTTPResponse | None:
+        expected = settings.api_key
+        if not expected or not request.path.startswith("/api/"):
+            return None
+        provided = presented_key(request)
+        return None if secrets.compare_digest(provided, expected) else rejection(provided)
+
+    @app.on_request
+    async def _require_dashboard_key(request: Request) -> BaseHTTPResponse | None:
+        expected = settings.api_key
+        if not expected:
+            return None
+        if request.path != dashboard_path and not request.path.startswith(f"{dashboard_path}/"):
+            return None
+        provided = presented_key(request, allow_cookie=True)
+        return None if secrets.compare_digest(provided, expected) else rejection(provided)
+
+    @app.on_response
+    async def _record(request: Request, response: BaseHTTPResponse) -> None:
+        route = getattr(request.route, "path", None) or "-"
+        request.app.ctx.metrics.record_request(route, response.status)
+
+    @app.exception(MimoError)
+    async def _upstream_error(_request: Request, exc: MimoError) -> BaseHTTPResponse:
+        return json_response({"error": exc.as_dict()}, status=exc.status)
+
+    @app.exception(BadRequest)
+    async def _invalid_request(_request: Request, exc: BadRequest) -> BaseHTTPResponse:
+        return json_response(
+            {"error": {"type": "invalid_request", "message": str(exc)}},
+            status=400,
+        )
+
+    @app.exception(SanicException)
+    async def _sanic_error(_request: Request, exc: SanicException) -> BaseHTTPResponse:
+        return json_response(
+            {"error": {"type": "http_error", "message": str(exc)}},
+            status=exc.status_code or 500,
+        )
+
+    @app.get("/healthz")
+    async def healthz(request: Request) -> BaseHTTPResponse:
+        """Liveness probe plus the small amount of config the UI needs.
+
+        恒 200：凭证过期不该让编排器 restart-loop；``status``/``credentials``/
+        ``upstreamAuth`` 如实汇报（任一上游成功即可清掉 ``rejected``）。
+        """
+        creds: CredentialStore = request.app.ctx.credentials
+        metrics: Metrics = request.app.ctx.metrics
+        configured = creds.configured
+        auth = metrics.auth_state()
+        client: MimoClient = request.app.ctx.client
+        return json_response(
+            {
+                "status": "ok" if configured and not auth["rejected"] else "degraded",
+                "version": settings.version,
+                "uptimeSeconds": round(metrics.snapshot()["uptimeSeconds"], 3),
+                "credentials": {"configured": configured, "sources": creds.sources()},
+                "upstreamAuth": auth,
+                "reauth": client.reauth_state(),
+                "upstream": settings.base_url,
+                "refreshSeconds": settings.dashboard_refresh_seconds,
+            }
+        )
+
+    app.blueprint(api.bp)
+
+    dashboard_html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    dashboard_html = dashboard_html.replace("{{STATIC}}", f"{dashboard_path}/static")
+    # ?v= 版本号随发布同步，改静态资源后浏览器立刻拉新
+    dashboard_html = dashboard_html.replace("{{VERSION}}", STATIC_VERSION)
+
+    async def _dashboard(request: Request) -> BaseHTTPResponse:
+        response = html(dashboard_html)
+        bootstrap = request.args.get("key") or ""
+        if settings.api_key and bootstrap and secrets.compare_digest(bootstrap, settings.api_key):
+            response.add_cookie(
+                DASHBOARD_COOKIE,
+                settings.api_key,
+                path=dashboard_path,
+                httponly=True,
+                secure=False,
+                max_age=DASHBOARD_COOKIE_MAX_AGE,
+            )
+        return response
+
+    app.add_route(_dashboard, dashboard_path, methods=["GET"])
+
+    # 静态资源：Sanic 默认 no-cache；这里显式给可缓存窗口，失效靠 ?v= 版本号
+    @app.on_response
+    async def _static_cache_headers(request: Request, response: BaseHTTPResponse) -> None:
+        if request.path.startswith(f"{dashboard_path}/static/"):
+            response.headers["Cache-Control"] = "public, max-age=3600"
+
+    app.static(f"{dashboard_path}/static", str(STATIC_DIR), name="dashboard-static")
+
+    if dashboard_path != "/":
+
+        @app.get("/")
+        async def _to_dashboard(_request: Request) -> BaseHTTPResponse:
+            return redirect(dashboard_path)
+
+    return app
+
+
+__all__ = ["create_app", "MissingCredentialError", "STATIC_VERSION"]
