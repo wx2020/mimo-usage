@@ -248,8 +248,8 @@ function renderStats(data, yearlyRows) {
 
   const row2 = $("stats-2");
   row2.replaceChildren(
-    statCard("今日 tokens", compactNum(todayTokens), `请求 ${num(todayRequests, 0)} 次`),
-    statCard("本月 tokens", compactNum(monthTokens),
+    statCard("今日 Tokens", compactNum(todayTokens), `请求 ${num(todayRequests, 0)} 次`),
+    statCard("本月 Tokens", compactNum(monthTokens),
       `日均 ${compactNum(monthTokens / (perDay.size || 1))} · ${perDay.size} 天 · ${num(monthRequests, 0)} 请求`),
     statCard("总 Tokens", compactNum(allTimeTokens), "全期（本月 + 历史月度）",
       { title: "本月按日行 + 按年聚合行（剔除本月，近两年）" }),
