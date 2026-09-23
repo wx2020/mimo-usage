@@ -50,6 +50,14 @@ vim config.yaml   # 至少填 credentials.serviceToken/deviceId/userId；
 
 ### Docker
 
+CI 会在 `main` 与版本 tag 上构建多架构镜像并推送到 GHCR，可直接拉取：
+
+```bash
+docker pull ghcr.io/wx2020/mimo-usage:latest
+```
+
+本地构建：
+
 ```bash
 docker build -t mimo-usage .
 docker run -d --name mimo-usage -p 8000:8000 mimo-usage
@@ -88,10 +96,10 @@ serviceToken 过期(401)
 - 防验证码：沿用**同一浏览器**的 `deviceFingerprint`/`deviceId`、Chrome 拟态头、密码失败
   1h 冷却、`captchaUrl` 出现立即熔断（实现见 `mimo_usage/client.py`）
 - 续登换发的 serviceToken/ph/slh/userId/passToken **原子写回 config.yaml**
-
-环境变量仍全部可用且**优先级高于 config.yaml**（`MIMO_CONFIG` 指定文件路径；
-`MIMO_PASSWORD` 明文只进内存并落 md5/bcrypt，绝不写入文件）。旧 `secrets/*_FILE`
-文件后端保留兼容。
+  （读侧同键非空 yaml 优先，写回对进程立即可见；`credentials.*` 空串时回落 `*_FILE`/内联预填）
+- 环境变量仍全部可用且**优先级高于 config.yaml**（`MIMO_CONFIG` 指定文件路径；
+  `MIMO_PASSWORD` 明文只进内存并落 md5/bcrypt，绝不写入文件）。旧 `secrets/*_FILE`
+  文件后端保留兼容（模板中默认注释；yaml 同键非空后以 yaml 为准）。
 
 ### 访问密钥（可选）
 
