@@ -26,6 +26,40 @@ DASHBOARD_COOKIE_MAX_AGE = 30 * 24 * 3600
 #: 静态资源版本号：与 __version__ 同步，配合 ?v= 让改版立即生效
 STATIC_VERSION = "1.0.0"
 
+#: 未授权时给「浏览器导航」看的引导页。
+#: API 客户端与静态资源仍返回泛化 JSON（不把认证方式喂给扫描器）；
+#: 仅当请求是看板 HTML 路径且 Accept 含 text/html 时使用本页。
+UNAUTHORIZED_PAGE = """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>未授权 · MiMo 用量看板</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #f5f6f8; color: #1f2329;
+         font: 14px/1.7 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .card { background: #fff; border: 1px solid #e6e8ec; border-radius: 12px; padding: 24px 28px;
+          max-width: 560px; margin: 16px; }
+  h1 { font-size: 18px; margin: 0 0 10px; }
+  p { margin: 6px 0; color: #4b5563; }
+  code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+  .hint { color: #8a919f; font-size: 12px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>未授权</h1>
+  <p>本看板已开启访问密钥。请用 <code>{{PATH}}?key=你的密钥</code> 打开一次本页。</p>
+  <p>密钥配置在 <code>config.yaml</code> 的 <code>server.apiKey</code>（或环境变量
+     <code>MIMO_API_KEY</code>）。</p>
+  <p>打开成功后，页面会把密钥存入浏览器本地存储，并自动抹掉地址栏里的参数。</p>
+  <p class="hint">API 客户端请用请求头 <code>X-API-Key</code> 或 <code>?key=</code> 参数调用。</p>
+</div>
+</body>
+</html>
+"""
+
 
 def normalise_path(raw: str) -> str:
     """``dashboard`` / ``/dashboard/`` -> ``/dashboard`` (``/`` stays ``/``)."""
@@ -98,6 +132,14 @@ def create_app(
             status=403 if missing else 401,
         )
 
+    def dashboard_rejection(request: Request, provided: str) -> BaseHTTPResponse:
+        """看板 HTML 被浏览器直接打开时给引导页；API/静态资源保持泛化 JSON。"""
+        accept = (request.headers.get("accept") or "").lower()
+        if "text/html" in accept and request.path == dashboard_path:
+            status = 403 if not provided else 401
+            return html(UNAUTHORIZED_PAGE.replace("{{PATH}}", dashboard_path), status=status)
+        return rejection(provided)
+
     @app.on_request
     async def _require_api_key(request: Request) -> BaseHTTPResponse | None:
         expected = settings.api_key
@@ -114,7 +156,7 @@ def create_app(
         if request.path != dashboard_path and not request.path.startswith(f"{dashboard_path}/"):
             return None
         provided = presented_key(request, allow_cookie=True)
-        return None if secrets.compare_digest(provided, expected) else rejection(provided)
+        return None if secrets.compare_digest(provided, expected) else dashboard_rejection(request, provided)
 
     @app.on_response
     async def _record(request: Request, response: BaseHTTPResponse) -> None:

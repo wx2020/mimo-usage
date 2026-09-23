@@ -393,6 +393,35 @@ def test_without_configured_api_key_everything_is_open(client: SanicTestClient) 
     assert client.get("/api/v1/usage", headers={"X-API-Key": "anything"})[1].status == 200
 
 
+def test_dashboard_unauthorized_returns_html_hint_for_browsers(client_for) -> None:
+    """浏览器直接打开看板（无密钥）：给带操作指引的 HTML 引导页，而不是裸 JSON。"""
+    client = client_for(api_key="s3cret")
+    _, response = client.get("/dashboard", headers={"Accept": "text/html,application/xhtml+xml"})
+
+    assert response.status == 403
+    assert response.headers["content-type"].startswith("text/html")
+    assert "/dashboard?key=" in response.text
+    assert "MIMO_API_KEY" in response.text
+
+
+def test_wrong_key_dashboard_hint_keeps_401(client_for) -> None:
+    client = client_for(api_key="s3cret")
+    _, response = client.get("/dashboard?key=wrong", headers={"Accept": "text/html"})
+
+    assert response.status == 401
+    assert response.headers["content-type"].startswith("text/html")
+
+
+def test_api_and_static_stay_opaque_json_even_with_html_accept(client_for) -> None:
+    """只有看板 HTML 给引导页；API 与静态资源始终泛化 JSON（不给扫描器指路）。"""
+    client = client_for(api_key="s3cret")
+    for path in ("/api/v1/usage", "/dashboard/static/app.js"):
+        _, response = client.get(path, headers={"Accept": "text/html"})
+        assert response.status in (401, 403)
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.json["error"]["type"] in {"forbidden", "unauthorized"}
+
+
 def test_dashboard_cookie_scope_does_not_cover_api(client_for) -> None:
     """cookie Path=/dashboard —— 只带 cookie 不带 header 打 API 仍应被拒。"""
     client = client_for(api_key="s3cret")
