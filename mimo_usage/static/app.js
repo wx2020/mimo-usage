@@ -79,6 +79,22 @@ function creditsOf(rows) {
   return total;
 }
 
+/* 时间统一按 Asia/Shanghai 呈现为 "YYYY-MM-DD HH:mm:ss"（与套餐到期同格式，不随设备时区变） */
+function formatCstTimestamp(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return String(value || "--");
+  const parts = {};
+  for (const part of new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date)) {
+    parts[part.type] = part.value;
+  }
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
 function cstToday() {
   const { year, month, day } = cstParts();
   return `${year}-${pad2(month)}-${pad2(day)}`;
@@ -640,7 +656,8 @@ async function load() {
 
     const plan = (data.tokenPlanDetail && data.tokenPlanDetail.planName) || "--";
     $("plan").textContent = plan;
-    updated.textContent = `更新于 ${(payload.meta && payload.meta.generatedAt) || new Date().toISOString()}`;
+    // 右上角：本次更新时间（Asia/Shanghai，YYYY-MM-DD HH:mm:ss）
+    updated.textContent = `更新于 ${formatCstTimestamp(payload.meta && payload.meta.generatedAt)}`;
     state.errors = [];
   } catch (error) {
     state.errors = [String(error && error.message || error)];
