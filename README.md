@@ -164,8 +164,21 @@ python3 scripts/release.py 1.1.0 --push --github    # 再用 API 建 GitHub Rele
 3. **GitHub Release body**——**推 tag 后由 `.github/workflows/release.yml` 自动创建/更新**
    （body 优先取 tag message，无则按提交历史生成），无需本地 `--github`
 
-notes 默认按 conventional commits 自动生成（`## What's Changed` / `## Feature` /
-`## Bugfix` / `## Contributors`），也可 `--notes FILE` 指定现成 markdown。
+notes 结构（与 1.0.0 一致）：
+
+- `## What's Changed` —— 自动生成的提交清单（**唯一**列举提交的位置）
+- `## Feature` / `## Bugfix` —— **人工归纳**的功能与修复说明，用 `--notes FILE` 传入
+  （避免与提交清单重复）
+- `## Contributors`
+
+```bash
+# 人工归纳段落示例（notes.md）
+## Feature
+* 看板跟随系统深浅色
+## Bugfix
+* 修复深色下柱状图黑线
+python3 scripts/release.py 1.2.0 --notes notes.md --push
+```
 
 ## 目录
 

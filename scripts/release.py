@@ -12,8 +12,8 @@
     ② annotated tag message = notes（同样 `verbatim`）
     ③ GitHub Release body = tag message（`--github`，需 OpenChamber 的 github-auth.json token）
 
-notes 可按 conventional commits 自动生成（`## What's Changed` / `## Feature` /
-`## Bugfix` / `## Contributors`），也可用 `--notes FILE` 指定现成 markdown。
+notes 结构：`## What's Changed`（自动=提交清单）+ 人工归纳的 `## Feature` / `## Bugfix`
+（用 `--notes FILE` 提供，不重复提交列表）+ `## Contributors`。
 """
 
 from __future__ import annotations
@@ -61,18 +61,18 @@ def collect_commits(since: str | None) -> list[tuple[str, str]]:
     return [(sha, subj) for sha, subj in rows if not subj.startswith("chore(release):")]
 
 
-def build_notes(version: str, commits: list[tuple[str, str]], author: str) -> str:
-    def kind(subject: str) -> str | None:
-        m = re.match(r"^(feat|fix)(\([^)]*\))?!?:", subject)
-        return m.group(1) if m else None
+def build_notes(version: str, commits: list[tuple[str, str]], author: str, curated: str = "") -> str:
+    """按 1.0.0 的结构生成 notes。
 
-    features = [f"* {s} ({sha})" for sha, s in commits if kind(s) == "feat"]
-    bugfixes = [f"* {s} ({sha})" for sha, s in commits if kind(s) == "fix"]
+    * ``## What's Changed``：**唯一**列举提交的地方（自动生成）
+    * ``## Feature`` / ``## Bugfix``：人工归纳的功能/修复说明（由 ``--notes`` 提供），
+      自动模式不再把提交列表重复塞进来
+    * ``## Contributors``
+    """
     changed = [f"* {s} ({sha})" for sha, s in commits] or ["* 维护性发布"]
-    lines = ["## What's Changed", *changed, "", "## Feature"]
-    lines += features or ["- 无"]
-    lines += ["", "## Bugfix"]
-    lines += bugfixes or ["- 无"]
+    lines = ["## What's Changed", *changed]
+    if curated.strip():
+        lines += ["", curated.strip()]
     lines += ["", "## Contributors", f"* @{author}"]
     return "\n".join(lines)
 
@@ -136,7 +136,11 @@ def create_github_release(tag: str, notes: str, dry_run: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="mimo-usage 发版")
     parser.add_argument("version", help="语义化版本号，如 1.1.0")
-    parser.add_argument("--notes", help="现成的 notes markdown 文件（默认按 conventional commits 自动生成）")
+    parser.add_argument(
+        "--notes",
+        help="人工归纳段落（如 '## Feature' / '## Bugfix' 小节）；会拼到自动生成的 "
+             "'## What's Changed' 之后，避免与提交清单重复",
+    )
     parser.add_argument("--push", action="store_true", help="推送 main 与 tag 到 origin")
     parser.add_argument("--github", action="store_true", help="用 API 创建 GitHub Release（需 GitHub token）")
     parser.add_argument("--dry-run", action="store_true", help="只打印将要做的改动")
@@ -155,10 +159,8 @@ def main() -> None:
     since = previous_tag()
     commits = collect_commits(since)
     author = run("git", "config", "user.name") or "wx2020"
-    if args.notes:
-        notes = pathlib.Path(args.notes).read_text(encoding="utf-8").rstrip("\n")
-    else:
-        notes = build_notes(version, commits, author)
+    curated = pathlib.Path(args.notes).read_text(encoding="utf-8") if args.notes else ""
+    notes = build_notes(version, commits, author, curated)
     if not notes.strip():
         fail("notes 为空")
 
