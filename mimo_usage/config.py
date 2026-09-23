@@ -8,8 +8,10 @@
 * 凭据中的**密码明文**只允许在 ``credentials.password`` 出现一次：服务**加载时立即**
   换算为 ``passwordMd5``（登录所需，MD5 大写）与 ``passwordBcrypt``（``$2b$10$…``
   bcrypt，格式同 ``$2a$`` 示例族）并**从文件删除明文**——之后磁盘上不再有明文密码。
-* ``*_FILE`` 文件后端仍然支持；``_Secret.get()`` 实序见下——**设了 ``*_FILE`` 则
-  文件 > 内联 env > 无（yaml 不参与读取）；未设则 内联 env > yaml > 无**。
+* ``*_FILE`` 文件后端仍然支持；``_Secret`` 凭据读序（与写回对称，见其 docstring）：
+  **yaml（非空）> 设了 ``*_FILE`` 则 文件 > 内联 env > 无**；未设 path 时
+  **内联 env > yaml > 无**。续登 ``set`` 有 store 只写 yaml——path 分支 get
+  会先读 yaml，故写回立即可见。
 """
 
 from __future__ import annotations
@@ -349,13 +351,16 @@ class YamlStore:
 
 
 class _Secret:
-    """一个凭据位（读 ``get``，与测试 ``test_secret_prefers_file_*`` 一致）：
+    """一个凭据位（读写对称：``set`` 的写目标即 ``get`` 的首选）。
 
-    * 设了 ``*_FILE``（path 非空）：**文件 > 内联 env > 无**——yaml 不参与读取；
-      文件缺失/为空时回落内联，两者皆无则 ``None``（不会读 yaml）。
-    * 未设 path：**内联 env > yaml > 无**。
-    * 写回 ``set``：有 yaml store 则**只写 yaml**（原子、0600），否则写文件，再否则改内存；
-      store 与 path 并存时写 yaml、读文件——续登新值在文件未同步前对 ``get`` 不可见。
+    读序 ``get`` / 来源 ``source``：
+
+    * store 有**非空** yaml 值 → **yaml**（无论是否设 path；``set`` 写这里，续登立即可见）
+    * 否则 path 非空（设了 ``*_FILE``）→ **文件 > 内联 env > 无**
+    * 否则（无 path）→ **内联 env > yaml > 无**
+
+    写回 ``set``：有 yaml store 则**只写 yaml**（原子、0600），否则写文件，再否则改内存。
+    ``config.yaml.example`` 凭据为空串时 yaml 归 ``None``，自然回落 ``*_FILE`` 预填。
     """
 
     __slots__ = ("name", "_inline", "_path", "_mtime", "_cached", "_checked_at", "_store", "_store_key")
@@ -380,42 +385,60 @@ class _Secret:
         self._store = store
         self._store_key = store_key
 
+    def _yaml_value(self) -> str | None:
+        if self._store is None or not self._store_key:
+            return None
+        return self._store.get(self._store_key)
+
+    def _file_cached(self) -> str | None:
+        """path 分支文件热载（1s 节流）；OSError/空串 → 沿用旧 cache 或 None。"""
+        if self._path is None:
+            return None
+        now = time.monotonic()
+        if self._mtime is not None and now - self._checked_at < self.CHECK_INTERVAL:
+            return self._cached
+        self._checked_at = now
+        try:
+            mtime = self._path.stat().st_mtime
+        except OSError:
+            return self._cached
+        if mtime != self._mtime:
+            try:
+                value = self._path.read_text(encoding="utf-8").strip()
+            except OSError:
+                return self._cached
+            self._cached = value or None
+            self._mtime = mtime
+        return self._cached
+
     @property
     def source(self) -> str:
-        if self._path is not None:
-            return "file"
-        if self._inline:
-            return "env"
-        if self._store is not None and self._store.get(self._store_key or ""):
+        if self._path is None:
+            if self._inline:
+                return "env"
+            return "yaml" if self._yaml_value() else "none"
+        yv = self._yaml_value()
+        if yv:
             return "yaml"
-        return "none"
+        if self._file_cached():
+            return "file"
+        return "env" if self._inline else "none"
 
     def get(self) -> str | None:
         if self._path is None:
             if self._inline:
                 return self._inline
-            if self._store is not None and self._store_key:
-                return self._store.get(self._store_key)
-            return None
-        now = time.monotonic()
-        if self._mtime is not None and now - self._checked_at < self.CHECK_INTERVAL:
-            return self._cached or self._inline
-        self._checked_at = now
-        try:
-            mtime = self._path.stat().st_mtime
-        except OSError:
-            return self._cached or self._inline
-        if mtime != self._mtime:
-            try:
-                value = self._path.read_text(encoding="utf-8").strip()
-            except OSError:
-                return self._cached or self._inline
-            self._cached = value or None
-            self._mtime = mtime
-        return self._cached or self._inline
+            return self._yaml_value()
+        yv = self._yaml_value()
+        if yv:
+            return yv
+        return self._file_cached() or self._inline
 
     def set(self, value: str) -> None:
-        """续登成功后写回：优先 config.yaml（原子、0600），其次文件，再次内存。"""
+        """续登成功后写回：优先 config.yaml（原子、0600），其次文件，再次内存。
+
+        有 store 时 ``get`` 的 path 分支会先读 yaml——写回对读立即可见。
+        """
         value = (value or "").strip()
         if self._store is not None and self._store_key:
             self._store.set(self._store_key, value)

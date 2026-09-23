@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from mimo_usage.config import CredentialStore, Settings, _Secret
+from mimo_usage.config import CredentialStore, Settings, YamlStore, _Secret
 
 
 def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,7 +59,7 @@ def test_secret_prefers_file_and_hot_reloads(tmp_path, monkeypatch: pytest.Monke
 def test_secret_falls_back_to_inline_when_file_missing(tmp_path) -> None:
     secret = _Secret("SERVICE_TOKEN", inline="inline-token", path=tmp_path / "nope")
     assert secret.get() == "inline-token"
-    assert secret.source == "file"
+    assert secret.source == "env"  # 文件未提供值，实际来源是内联
 
 
 def test_secret_set_writes_back_to_file(tmp_path) -> None:
@@ -77,6 +77,60 @@ def test_secret_set_inline_when_no_file() -> None:
     secret = _Secret("SERVICE_TOKEN", "old")
     secret.set("new")
     assert secret.get() == "new"
+
+
+def _dual_secret(tmp_path, *, yaml_token: str, file_token: str | None, inline: str | None = None):
+    """store + path 并存（方案 A 双开场景）。"""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "credentials:\n"
+        f"  serviceToken: '{yaml_token}'\n" if yaml_token else "credentials:\n  serviceToken: \"\"\n",
+        encoding="utf-8",
+    )
+    store = YamlStore(str(cfg))
+    path = tmp_path / "serviceToken"
+    if file_token is not None:
+        path.write_text(file_token + "\n", encoding="utf-8")
+    return _Secret(
+        "SERVICE_TOKEN",
+        inline=inline,
+        path=path,
+        store=store,
+        store_key="credentials.serviceToken",
+    )
+
+
+def test_dual_store_and_path_set_visible_to_get(tmp_path) -> None:
+    """set 写 yaml、get 先读 yaml——续登写回对读立即可见（方案 A 核心）。"""
+    secret = _dual_secret(tmp_path, yaml_token="YAML-OLD", file_token="FILE-OLD")
+    assert secret.get() == "YAML-OLD"
+    assert secret.source == "yaml"
+
+    secret.set("NEW-TOK")
+    assert secret.get() == "NEW-TOK"
+    assert secret.source == "yaml"
+    # 文件未被动过，旧值仍在；yaml 已是新值
+    assert (tmp_path / "serviceToken").read_text(encoding="utf-8").strip() == "FILE-OLD"
+    assert "NEW-TOK" in (tmp_path / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_dual_empty_yaml_falls_back_to_file(tmp_path) -> None:
+    """config.yaml.example 式空串 → None → 回落 *_FILE 预填。"""
+    secret = _dual_secret(tmp_path, yaml_token="", file_token="FILE-BOOT")
+    assert secret.get() == "FILE-BOOT"
+    assert secret.source == "file"
+
+
+def test_dual_nonempty_yaml_wins_over_file(tmp_path) -> None:
+    secret = _dual_secret(tmp_path, yaml_token="YAML-WINS", file_token="FILE-LOSES")
+    assert secret.get() == "YAML-WINS"
+    assert secret.source == "yaml"
+
+
+def test_dual_empty_yaml_missing_file_uses_inline(tmp_path) -> None:
+    secret = _dual_secret(tmp_path, yaml_token="", file_token=None, inline="INLINE-TOK")
+    assert secret.get() == "INLINE-TOK"
+    assert secret.source == "env"
 
 
 def test_credential_store_from_values_cookie_header() -> None:
