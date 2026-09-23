@@ -1,0 +1,52 @@
+name: Release
+
+# 推送 v* tag 即自动创建/更新 GitHub Release：
+#   body 优先取 annotated tag 的 message（由 scripts/release.py 写入，三处同步之一）；
+#   tag 无 message 时退回按提交历史自动生成。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # 生成 notes 需要完整历史
+
+      - name: Build release notes
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          # ① annotated tag 的 message（release 脚本会写；lightweight tag 则为空）
+          git tag -l --format='%(contents)' "$tag" > /tmp/release-body.md
+          if [ ! -s /tmp/release-body.md ]; then
+            # ② 退回：按 conventional commits 自动生成
+            prev="$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)"
+            range="${prev:+${prev}..}${tag}"
+            {
+              echo "## What's Changed"
+              git log --reverse --pretty=format:'* %s (%h)' "$range"
+              echo
+            } > /tmp/release-body.md
+          fi
+          echo "notes 行数：$(wc -l < /tmp/release-body.md)"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file /tmp/release-body.md
+            echo "updated existing release: $tag"
+          else
+            gh release create "$tag" --title "$tag" --notes-file /tmp/release-body.md
+            echo "created release: $tag"
+          fi

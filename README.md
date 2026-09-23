@@ -149,6 +149,24 @@ node --check mimo_usage/static/app.js
 node --check mimo_usage/_crypto_node.cjs
 ```
 
+## 发布流程
+
+```bash
+python3 scripts/release.py 1.1.0 --dry-run          # 预览 notes 与版本改动
+python3 scripts/release.py 1.1.0 --push             # 提交 + 打 tag + 推送
+python3 scripts/release.py 1.1.0 --push --github    # 再用 API 建 GitHub Release
+```
+
+脚本把 release notes 同步到三处，避免"只有 tag 有 notes、release 提交却是空的"：
+
+1. **release 提交 body**（`--cleanup=verbatim`，否则 `#` 开头的标题会被删）
+2. **annotated tag message**（同样 `verbatim`）
+3. **GitHub Release body**——**推 tag 后由 `.github/workflows/release.yml` 自动创建/更新**
+   （body 优先取 tag message，无则按提交历史生成），无需本地 `--github`
+
+notes 默认按 conventional commits 自动生成（`## What's Changed` / `## Feature` /
+`## Bugfix` / `## Contributors`），也可 `--notes FILE` 指定现成 markdown。
+
 ## 目录
 
 ```
