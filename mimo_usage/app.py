@@ -24,7 +24,7 @@ APP_NAME = "mimo_usage"
 DASHBOARD_COOKIE = "mimo_usage_key"
 DASHBOARD_COOKIE_MAX_AGE = 30 * 24 * 3600
 #: 静态资源版本号：与 __version__ 同步，配合 ?v= 让改版立即生效
-STATIC_VERSION = "1.0.0"
+STATIC_VERSION = "1.0.0-1"  # 静态资源缓存键（本次为暗色适配刷新；包版本仍 1.0.0）
 
 #: 未授权时给「浏览器导航」看的引导页。
 #: API 客户端与静态资源仍返回泛化 JSON（不把认证方式喂给扫描器）；
@@ -34,6 +34,7 @@ UNAUTHORIZED_PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>未授权 · MiMo 用量看板</title>
 <style>
   body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
@@ -45,6 +46,13 @@ UNAUTHORIZED_PAGE = """<!doctype html>
   p { margin: 6px 0; color: #4b5563; }
   code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
   .hint { color: #8a919f; font-size: 12px; margin-top: 14px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #14161a; color: #e6e8eb; }
+    .card { background: #1c1f24; border-color: #2c323a; }
+    p { color: #b6bcc6; }
+    code { background: #2c323a; color: #e6e8eb; }
+    .hint { color: #8a919f; }
+  }
 </style>
 </head>
 <body>

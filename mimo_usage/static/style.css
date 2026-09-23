@@ -1,15 +1,47 @@
 /* MiMo 用量看板：无外链，纯手写 DOM + SVG。 */
 
 :root {
+  color-scheme: light dark;
   --bg: #f5f6f8;
   --card: #ffffff;
   --text: #1f2329;
   --muted: #8a919f;
   --accent: #ff824b;
   --accent-2: #4c8dff;
+  --accent-soft: #ffb08a;      /* 进度条/柱状渐变末端 */
   --border: #e6e8ec;
   --ok: #1fa855;
   --bad: #e5484d;
+  --badge-bg: #fff1e8;
+  --badge-border: #ffd6bd;
+  --banner-bg: #fff7ed;
+  --banner-border: #fed7aa;
+  --banner-text: #9a3412;
+  --hero-border: #ffd9c2;
+  --hero-from: #fffaf6;
+}
+
+/* 跟随设备外观：系统深色时切到暗色变量（图表模型配色由 JS 侧同步切换） */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --card: #1c1f24;
+    --text: #e6e8eb;
+    --muted: #9aa2ad;
+    --accent: #ff8f52;
+    --accent-2: #6ea8ff;
+    --accent-soft: #b45c2b;
+    --border: #2c323a;
+    --ok: #46c37a;
+    --bad: #ff6b6f;
+    --badge-bg: #2c211a;
+    --badge-border: #4a3323;
+    --banner-bg: #2a1f16;
+    --banner-border: #4a3323;
+    --banner-text: #ffc09a;
+    --hero-border: #3a2a20;
+    --hero-from: #221d1a;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -48,9 +80,9 @@ h1 { font-size: 20px; margin: 0; }
 .spacer { flex: 1; }
 .muted { color: var(--muted); font-size: 12px; }
 .badge {
-  background: #fff1e8;
+  background: var(--badge-bg);
   color: var(--accent);
-  border: 1px solid #ffd6bd;
+  border: 1px solid var(--badge-border);
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 12px;
@@ -65,9 +97,9 @@ button {
 button:hover { border-color: var(--accent); color: var(--accent); }
 
 .banner {
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
-  color: #9a3412;
+  background: var(--banner-bg);
+  border: 1px solid var(--banner-border);
+  color: var(--banner-text);
   border-radius: 10px;
   padding: 10px 14px;
   margin-bottom: 14px;
@@ -80,8 +112,8 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 .hero { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .hero .stat {
   padding: 18px 20px;
-  border-color: #ffd9c2;
-  background: linear-gradient(180deg, #fffaf6, var(--card));
+  border-color: var(--hero-border);
+  background: linear-gradient(180deg, var(--hero-from), var(--card));
 }
 .hero .stat .value { font-size: 32px; margin-top: 6px; }
 .hero .stat .sub { font-size: 12px; margin-top: 4px; }
@@ -108,7 +140,7 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), #ffb08a);
+  background: linear-gradient(90deg, var(--accent), var(--accent-soft));
   transition: width .4s ease;
 }
 .card h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
@@ -176,7 +208,7 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   display: block;
   width: 70%;
   max-width: 28px;
-  background: linear-gradient(180deg, var(--accent), #ffb08a);
+  background: linear-gradient(180deg, var(--accent), var(--accent-soft));
   border-radius: 4px 4px 0 0;
   min-height: 2px;
 }

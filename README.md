@@ -30,6 +30,7 @@ Sanic + httpx + orjson + uvloop。
 - Cookie 鉴权（`api-platform_serviceToken` 等），凭证文件 **mtime 热重载**
 - 401/loginUrl 自动续登：`serviceLoginAuth2 → /sts` 换新 serviceToken 落盘；
   失败进入冷却期返回可读错误，不循环打上游
+- 看板自动跟随系统深浅色（`prefers-color-scheme`：页面、图表配色与未授权引导页一并适配）
 - TTL 缓存 + single-flight、`?refresh=1` 限流、stale 兜底（鉴权错误不吃 stale）
 - 上游字段兼容层（`mimo_usage/compat.py`）
 

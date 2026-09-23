@@ -343,14 +343,36 @@ const MODEL_PALETTES = {
   5: ["#cf4a0d", "#f26a1b", "#ff9f6b", "#ffc39c", "#ffe2cf"],
   6: ["#b83a09", "#dc520f", "#f26a1b", "#ff824b", "#ffab7d", "#ffd0b0"],
 };
-const MODEL_OTHER_COLOR = "#cbd2dc";
+/* 深色背景下整体提亮一档，保证最小档也有足够对比（同样"占最多最深"） */
+const DARK_MODEL_PALETTES = {
+  1: ["#ff9a5c"],
+  2: ["#ff8f52", "#ffc49b"],
+  3: ["#ff824b", "#ffb98f", "#ffe0c8"],
+  4: ["#f2742f", "#ffa06b", "#ffc9a5", "#ffe6d2"],
+  5: ["#f26a1b", "#ff9a5c", "#ffb98f", "#ffd5b8", "#fff0e4"],
+  6: ["#e8651f", "#ff8f52", "#ffab7d", "#ffc6a0", "#ffddc4", "#fff2e8"],
+};
+const MODEL_OTHER_LIGHT = "#cbd2dc";
+const MODEL_OTHER_DARK = "#4d5663";
 const MODEL_COLOR_SLOTS = 6;
+
+const prefersDark = () =>
+  !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+function modelPalettes() {
+  return prefersDark() ? DARK_MODEL_PALETTES : MODEL_PALETTES;
+}
+
+function otherColor() {
+  return prefersDark() ? MODEL_OTHER_DARK : MODEL_OTHER_LIGHT;
+}
 
 /* rank 0 = 占比最高（该档位组里最深） */
 function colorForRank(rank, coloredCount) {
   const slots = Math.max(1, Math.min(coloredCount || 1, MODEL_COLOR_SLOTS));
-  const palette = MODEL_PALETTES[slots] || MODEL_PALETTES[MODEL_COLOR_SLOTS];
-  return rank < palette.length ? palette[rank] : MODEL_OTHER_COLOR;
+  const table = modelPalettes();
+  const palette = table[slots] || table[MODEL_COLOR_SLOTS];
+  return rank < palette.length ? palette[rank] : otherColor();
 }
 
 function renderTokenTrend(points) {
@@ -407,7 +429,7 @@ function renderTokenTrend(points) {
         if (otherTokens > 0) {
           const segment = document.createElement("i");
           segment.style.height = ((otherTokens / max) * 100).toFixed(3) + "%";
-          segment.style.background = MODEL_OTHER_COLOR;
+          segment.style.background = otherColor();
           col.append(segment);
         }
       }
@@ -447,7 +469,7 @@ function renderTokenTrend(points) {
       const item = document.createElement("span");
       const swatch = document.createElement("i");
       swatch.className = "swatch";
-      swatch.style.background = MODEL_OTHER_COLOR;
+      swatch.style.background = otherColor();
       const name = document.createElement("em");
       name.textContent = `\u5176\u4ed6\uff08${rest.length} \u6b3e\uff09`;
       item.append(swatch, name);
@@ -639,6 +661,13 @@ function boot() {
   $("refresh").addEventListener("click", () => load());
   load();
   state.timer = setInterval(load, REFRESH_SECONDS * 1000);
+  // 设备外观切换（浅/深色）时，图表配色需要按新主题重绘一次
+  if (window.matchMedia) {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onSchemeChange = () => load();
+    if (typeof media.addEventListener === "function") media.addEventListener("change", onSchemeChange);
+    else if (typeof media.addListener === "function") media.addListener(onSchemeChange);
+  }
 }
 
 boot();
