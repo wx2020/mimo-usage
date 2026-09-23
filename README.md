@@ -166,10 +166,12 @@ python3 scripts/release.py 1.1.0 --push --github    # 再用 API 建 GitHub Rele
 
 notes 结构（与 1.0.0 一致）：
 
-- `## What's Changed` —— 自动生成的提交清单（**唯一**列举提交的位置）
+- `## What's Changed` —— 自动生成的提交清单（**唯一**列举提交的位置），每条形如
+  `* <subject> (<sha>) by @<author>`（与 GitHub 自动 notes 的 `* <标题> by @<user> in #PR` 同构）
 - `## Feature` / `## Bugfix` —— **人工归纳**的功能与修复说明，用 `--notes FILE` 传入
   （避免与提交清单重复）
-- **不写 `## Contributors`** —— GitHub 发布页会自动渲染该区块，手写会重复
+- **不写 `## Contributors`** —— 正文里出现 `@用户` 提及后，**GitHub 会自动渲染
+  Contributors 区块**；手写会与之重复
 
 ```bash
 # 人工归纳段落示例（notes.md）

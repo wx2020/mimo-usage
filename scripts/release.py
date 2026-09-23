@@ -61,15 +61,16 @@ def collect_commits(since: str | None) -> list[tuple[str, str]]:
     return [(sha, subj) for sha, subj in rows if not subj.startswith("chore(release):")]
 
 
-def build_notes(version: str, commits: list[tuple[str, str]], curated: str = "") -> str:
+def build_notes(version: str, commits: list[tuple[str, str]], author: str, curated: str = "") -> str:
     """按 1.0.0 的结构生成 notes。
 
-    * ``## What's Changed``：**唯一**列举提交的地方（自动生成）
-    * ``## Feature`` / ``## Bugfix``：人工归纳的功能/修复说明（由 ``--notes`` 提供），
-      自动模式不再把提交列表重复塞进来
-    * **不写 ``## Contributors``**：GitHub 发布页会自动渲染该区块，手写会重复
+    * ``## What's Changed``：**唯一**列举提交的地方；每条带 ``by @<author>``
+      （与 GitHub 自动 notes 的 ``* <标题> by @<user> in #PR`` 同构）——
+      **GitHub 据此在 Release 页自动渲染 Contributors 区块**
+    * ``## Feature`` / ``## Bugfix``：人工归纳（由 ``--notes`` 提供），不重复提交列表
+    * **不要写 ``## Contributors``**：正文有 @提及 时 GitHub 自动渲染，手写会重复
     """
-    changed = [f"* {s} ({sha})" for sha, s in commits] or ["* 维护性发布"]
+    changed = [f"* {s} ({sha}) by @{author}" for sha, s in commits] or [f"* 维护性发布 by @{author}"]
     lines = ["## What's Changed", *changed]
     if curated.strip():
         lines += ["", curated.strip()]
@@ -158,7 +159,8 @@ def main() -> None:
     since = previous_tag()
     commits = collect_commits(since)
     curated = pathlib.Path(args.notes).read_text(encoding="utf-8") if args.notes else ""
-    notes = build_notes(version, commits, curated)
+    author = run("git", "config", "user.name") or "wx2020"
+    notes = build_notes(version, commits, author, curated)
     if not notes.strip():
         fail("notes 为空")
 
