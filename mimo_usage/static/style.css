@@ -19,6 +19,7 @@
   --banner-text: #9a3412;
   --hero-border: #ffd9c2;
   --hero-from: #fffaf6;
+  --stack-sep: rgba(255, 255, 255, 0.72);   /* 堆叠段之间的分隔缝 */
 }
 
 /* 跟随设备外观：系统深色时切到暗色变量（图表模型配色由 JS 侧同步切换） */
@@ -41,6 +42,7 @@
     --banner-text: #ffc09a;
     --hero-border: #3a2a20;
     --hero-from: #221d1a;
+    --stack-sep: rgba(255, 255, 255, 0.22);   /* 深色下用淡亮缝，避免出现"黑点" */
   }
 }
 
@@ -224,9 +226,11 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   max-width: 28px;
   min-height: 0;
   border-radius: 0;
-  /* 段间 1px 白缝：纯橙系相邻段防糊成一片（用阴影不吃布局高度） */
-  box-shadow: 0 1px 0 0 var(--card);
+  /* 段间 1px 分隔缝：半透明（深色下不再渲染成黑点），且不占布局高度 */
+  box-shadow: 0 1px 0 0 var(--stack-sep);
 }
+/* 最底段的分隔缝会落到柱子外面，去掉 */
+.chart .col.stack > i:first-child { box-shadow: none; }
 .chart .col.stack > i:last-child { border-radius: 4px 4px 0 0; }
 /* 图例 */
 .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 10px 0 0; }

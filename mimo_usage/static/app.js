@@ -437,6 +437,8 @@ function renderTokenTrend(points) {
         const segment = document.createElement("i");
         segment.style.height = ((tokens / max) * 100).toFixed(3) + "%";
         segment.style.background = colorForRank(rank, coloredCount);
+        // 太薄的段不画分隔缝（否则浅色下是道白口、深色下就是柱顶一个"黑点"）
+        if (tokens / max < 0.02) segment.style.boxShadow = "none";
         col.append(segment);
       }
       // 「其他（第 7 名及以后）」并为一段中性灰
@@ -446,6 +448,7 @@ function renderTokenTrend(points) {
           const segment = document.createElement("i");
           segment.style.height = ((otherTokens / max) * 100).toFixed(3) + "%";
           segment.style.background = otherColor();
+          if (otherTokens / max < 0.02) segment.style.boxShadow = "none";
           col.append(segment);
         }
       }
