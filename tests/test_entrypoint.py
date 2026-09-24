@@ -40,4 +40,6 @@ def test_create_app_is_importable() -> None:
             registered.add(path if path.startswith("/") else f"/{path}")
     assert "/healthz" in registered
     assert "/dashboard" in registered
-    assert "/api/v1/overview" in registered
+    assert "/api/v1/summary" in registered
+    assert "/api/v1/usage" in registered
+    assert "/api/v1/overview" not in registered

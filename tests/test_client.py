@@ -9,7 +9,6 @@ import httpx
 import pytest
 from conftest import (
     AUTH_401_PAYLOAD,
-    BILL_PAYLOAD,
     DETAIL_LIST_PAYLOAD,
     SERVICE_LOGIN_AUTH2_OK,
     SERVICE_LOGIN_OK,
@@ -181,12 +180,12 @@ async def test_missing_credential_helper_flags_allow_stale() -> None:
 
 async def test_code_zero_is_success() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"code": 0, "message": "", "data": BILL_PAYLOAD["data"]})
+        return httpx.Response(200, json={"code": 0, "message": "", "data": {"tokenUsage": {"totalToken": 2}}})
 
     client, _, _ = client_for(handler)
     async with client:
-        rows = await client.usage_bill_monthly()
-    assert len(rows) == 2
+        data = await client.usage()
+    assert data["tokenUsage"]["totalToken"] == 2
 
 
 async def test_http_401_triggers_reauth_then_retry_success() -> None:

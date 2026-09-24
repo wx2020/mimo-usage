@@ -116,6 +116,10 @@ class TTLCache:
     def __len__(self) -> int:
         return len(self._data)
 
+    @property
+    def ttl(self) -> float:
+        return self._ttl
+
     def get(self, key: Hashable) -> Any | None:
         entry = self._data.get(key)
         if entry is None or entry.expires_at <= self._clock():

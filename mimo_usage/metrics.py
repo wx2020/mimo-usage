@@ -16,6 +16,7 @@ class Metrics:
         "_upstream_ms",
         "_auth_rejections",
         "_last_auth_rejection",
+        "_view_cache",
     )
 
     def __init__(self) -> None:
@@ -26,12 +27,20 @@ class Metrics:
         self._upstream_ms = 0.0
         self._auth_rejections = 0
         self._last_auth_rejection: float | None = None
+        self._view_cache: Counter[str] = Counter()
 
     def record_request(self, route: str, status: int) -> None:
         self._requests[f"{route}|{status}"] += 1
 
     def record_cache(self, state: str) -> None:
         self._requests[f"cache:{state}"] += 1
+
+    def record_view(self, state: str) -> None:
+        """端点级视图缓存的 HIT/MISS/STALE/… 计数（与分段缓存分开统计）。"""
+        self._view_cache[state] += 1
+
+    def view_cache(self) -> dict[str, int]:
+        return dict(self._view_cache)
 
     def record_upstream(self, elapsed_ms: float, *, error: bool = False) -> None:
         self._upstream_calls += 1
@@ -65,6 +74,7 @@ class Metrics:
                 for key, value in self._requests.items()
                 if key.startswith("cache:")
             },
+            "viewCache": dict(self._view_cache),
             "upstream": {
                 "calls": calls,
                 "errors": self._upstream_errors,

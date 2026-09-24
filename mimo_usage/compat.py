@@ -93,22 +93,6 @@ def normalise_usage_trend(data: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def normalise_bill_monthly(data: Any) -> list[dict[str, Any]]:
-    """月账单行；已知字段来自官方前端 CSV 导出代码（279 chunk）。"""
-    rows: list[dict[str, Any]] = []
-    for item in as_list(data):
-        row = as_dict(item)
-        rows.append(
-            {
-                "reportMonth": row.get("reportMonth"),
-                "consumptionAmount": as_float(row.get("consumptionAmount")),
-                "giftConsumption": as_float(row.get("giftConsumption")),
-                "cashConsumption": as_float(row.get("cashConsumption")),
-            }
-        )
-    return rows
-
-
 def normalise_token_plan_detail(data: Any) -> dict[str, Any]:
     payload = as_dict(data)
     payload.setdefault("planCode", None)
@@ -141,30 +125,6 @@ def normalise_token_plan_usage(data: Any) -> dict[str, Any]:
     month = as_dict(payload.get("monthUsage"))
     plan = as_dict(payload.get("usage"))
     return {"monthUsage": _usage_items(month), "usage": _usage_items(plan)}
-
-
-def normalise_open_plans(data: Any) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for item in as_list(data):
-        row = as_dict(item)
-        rows.append(
-            {
-                "planCode": row.get("planCode"),
-                "planName": row.get("planName"),
-                "planLevel": row.get("planLevel"),
-                "originalPrice": row.get("originalPrice"),
-                "discountPrice": row.get("discountPrice"),
-                "planPrice": row.get("planPrice"),
-                "currency": row.get("currency"),
-                "tokenQuotaCn": row.get("tokenQuotaCn"),
-                "tokenQuotaEn": row.get("tokenQuotaEn"),
-                "periodInterval": row.get("periodInterval"),
-                "active": row.get("active"),
-                "descriptionCn": row.get("descriptionCn"),
-                "descriptionEn": row.get("descriptionEn"),
-            }
-        )
-    return rows
 
 
 def normalise_profile(data: Any) -> dict[str, Any]:

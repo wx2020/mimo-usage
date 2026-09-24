@@ -18,20 +18,30 @@ Sanic + httpx + orjson + uvloop。
 ## 功能
 
 - `/healthz` 存活探针 + 凭证/续登状态
-- `/dashboard` 无外链看板：两排 stats、SVG 用量折线、月账单柱图（图表禁选、数据区可复制、静态资源 `Cache-Control` + `?v=`）
+- `/dashboard` 无外链看板：**前端纯渲染**——只调 `GET /api/v1/summary` 与
+  `GET /api/v1/usage` 两个接口，Credits 折算/百分比/剩余天数/天限额/token 汇总/峰值/
+  时间窗口/模型占比**全部由后端算好**（计算层 `mimo_usage/insights.py`，单价表服务端唯一来源）；
+  图表禁选、数据区可复制、静态资源 `Cache-Control` + `?v=`
 - 只读 API：
-  - `GET /api/v1/summary` — 套餐 / 月额度 / 计划额度 / 余额 / token·费用 概览
-  - `GET /api/v1/usage` — 账户维度 token/费用/限速
+  - `GET /api/v1/summary` — 套餐 + 顶部卡片（今日额度%/总额度%/天限额/剩余额度与天数/
+    今日·本月·全期 tokens/单日峰值）+ 账户 + 限速；数值后端算好
+  - `GET /api/v1/usage` — 近 30 天 token 趋势与模型分布 `chart`（`?days=` 可调）
+    + `accountRateLimit`/`pluginUsage`（+ 原始 `tokenUsage`/`costUsage`）
   - `GET /api/v1/usage/detail?year=&month=` — 年（月）用量明细
-  - `GET /api/v1/usage/bill` — 月账单
-  - `GET /api/v1/token-plan` — 订阅详情 + 额度用量 + 可购套餐
-  - `GET /api/v1/account` — userProfile + balance + projects
-  - `GET /api/v1/overview` — 以上并发聚合（`?fields=` 选段）
+  - `GET /api/v1/usage/trend?year=&month=` — 按日/按年原始行（chart 与其共用缓存）
+  - `GET /api/v1/account` — userProfile + balance + projects + verification
+  - `GET /api/v1/metrics` — 进程内计数器 + 分段/视图缓存观测（`caches`/`viewCache`）
+- 包月账号（`tokenPlanUsage.limit > 0`）下 `tokenUsage`/`costUsage`/`balance` 恒 0 时
+  **默认不输出**，用 `?fields=` 点名可取回；按量账号照常输出
 - Cookie 鉴权（`api-platform_serviceToken` 等），凭证文件 **mtime 热重载**
 - 401/loginUrl 自动续登：`serviceLoginAuth2 → /sts` 换新 serviceToken 落盘；
   失败进入冷却期返回可读错误，不循环打上游
 - 看板自动跟随系统深浅色（`prefers-color-scheme`：页面、图表配色与未授权引导页一并适配）
 - TTL 缓存 + single-flight、`?refresh=1` 限流、stale 兜底（鉴权错误不吃 stale）
+- 端点级**视图缓存**：`summary`/`usage` 整响应按 `serviceToken 指纹 + 端点 + days/fields`
+  缓存（`cache.viewTtl` / `MIMO_VIEW_TTL`，0=关闭），命中即跳过 gather 与计算；
+  配 `ETag` + `If-None-Match`（未变 → `304`）与 `Cache-Control: private, max-age=<viewTtl>`，
+  前端无需改动即受益；`/api/v1/metrics` 暴露其条目数与命中/穿透/stale 计数（`viewCache`）
 - 上游字段兼容层（`mimo_usage/compat.py`）
 
 **不做**：购买/取消/导出/team 等任何写操作。
@@ -81,9 +91,9 @@ docker run -d --name mimo-usage -p 8000:8000 mimo-usage
 打开 <http://127.0.0.1:8000/dashboard>；API 示例：
 
 ```bash
-curl -s localhost:8000/api/v1/summary | jq .data
+curl -s localhost:8000/api/v1/summary | jq '.data.cards'
+curl -s localhost:8000/api/v1/usage | jq '.data.chart.totals'
 curl -s 'localhost:8000/api/v1/usage/detail?year=2026&month=9' | jq .
-curl -s localhost:8000/api/v1/overview | jq '.meta.errors'
 ```
 
 ### 凭据与自动续登（三级降级）
@@ -137,6 +147,7 @@ serviceToken 过期(401)
 | `MIMO_USERNAME` / `MIMO_PASSWORD` / `MIMO_PASSWORD_HASH` | — | 密码续登材料（明文仅内存，自动转 md5+bcrypt） |
 | `MIMO_DEVICE_FINGERPRINT` | 无（必填才可密码续登） | 浏览器登录时抓取的 FingerprintJS visitorId |
 | `MIMO_API_KEY` | 空=不鉴权 | `X-API-Key` / `?key=` / dashboard cookie |
+| `MIMO_VIEW_TTL` | `30` | 端点级视图缓存 TTL（秒，`summary`/`usage`；`0` 关闭；env > `cache.viewTtl`） |
 | `MIMO_REAUTH_COOLDOWN` | `300` | 免密续登失败冷却（秒） |
 | `MIMO_PASSWORD_REAUTH_COOLDOWN` | `3600` | 密码分支失败/验证码冷却（秒） |
 | `MIMO_PORT` / `MIMO_HOST` / `MIMO_WORKERS` | `8000` / `0.0.0.0` / `1` | 服务 |
@@ -196,8 +207,9 @@ mimo_usage/
   cache.py            # TTLCache（single-flight/stale）+ IntervalGate
   timerange.py        # Asia/Shanghai 时间窗 + year/month 稳定窗口
   compat.py           # 上游字段兼容层
-  api/                # /api/v1 蓝图（sections/summary/overview/system）
-  static/             # 看板（无外链，纯手写 DOM/SVG）
+  insights.py         # 纯计算层：Credits 折算/卡片/chart（无 I/O，后端唯一口径）
+  api/                # /api/v1 蓝图（sections/summary/system）
+  static/             # 看板（无外链，纯手写 DOM；前端只做纯渲染）
 config.yaml.example   # 主配置模板（复制为 config.yaml，git 忽略）
 tests/                # pytest + httpx.MockTransport
 ```

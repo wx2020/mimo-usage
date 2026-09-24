@@ -9,11 +9,9 @@ from conftest import (
     AUTH_401_PAYLOAD,
     AUTH_VERIFICATION_PATH,
     BALANCE_PATH,
-    OPEN_TOKEN_PLAN_LIST_PATH,
     PROFILE_PAYLOAD,
     TOKEN_PLAN_DETAIL_PATH,
     TOKEN_PLAN_USAGE_PATH,
-    USAGE_BILL_MONTHLY_PATH,
     USAGE_DETAIL_LIST_PATH,
     USAGE_PATH,
     USAGE_TREND_PATH,
@@ -36,6 +34,27 @@ def client_for(upstream: FakeUpstream):
         return SanicTestClient(app, port=None)
 
     return _make
+
+
+def set_today_trend(upstream: FakeUpstream, tokens: int = 1000, requests: int = 3) -> None:
+    """把 trend 夹具换成"今天"的按日行，让 summary 卡片数值与运行日期无关。"""
+    today = now().date().isoformat()
+    upstream.payloads[USAGE_TREND_PATH] = {
+        "code": 0,
+        "message": "",
+        "data": [
+            {
+                "date": today,
+                "model": "mimo-v2.6-flash",
+                "totalToken": tokens,
+                "inputHitToken": 800,
+                "inputMissToken": 100,
+                "outputToken": 100,
+                "requestCount": requests,
+                "inputAudioDuration": 0,
+            }
+        ],
+    }
 
 
 def test_healthz_reports_missing_credentials(client_for) -> None:
@@ -73,19 +92,33 @@ def test_missing_service_token_is_401_on_api(client_for) -> None:
     assert response.json["error"]["type"] == "missing_credential"
 
 
-def test_usage_is_cached_between_requests(client: SanicTestClient, upstream: FakeUpstream) -> None:
+def test_usage_returns_computed_chart_and_caches(client: SanicTestClient, upstream: FakeUpstream) -> None:
     _, first = client.get("/api/v1/usage")
     _, second = client.get("/api/v1/usage")
 
     assert first.status == 200
-    assert first.json["data"]["tokenUsage"]["totalToken"] == 150
+    data = first.json["data"]
+    chart = data["chart"]
+    assert len(chart["points"]) == 30
+    assert chart["axisMax"] > 0
+    assert isinstance(chart["models"], list)
+    assert "accountRateLimit" in data
+    assert "pluginUsage" in data
     assert first.headers["x-cache"] == "MISS"
     assert second.headers["x-cache"] == "HIT"
     assert upstream.count(USAGE_PATH) == 1
 
 
 def test_usage_normalises_missing_token_keys(client_for, upstream: FakeUpstream) -> None:
-    """兼容层：上游少给的 tokenUsage 键补 0，前端不用层层判空。"""
+    """兼容层：按量账号少给的 tokenUsage 键补 0，前端不用层层判空。"""
+    upstream.payloads[TOKEN_PLAN_USAGE_PATH] = {
+        "code": 0,
+        "message": "",
+        "data": {
+            "usage": {"items": [{"name": "plan_total_token", "used": 0, "limit": 0}]},
+            "monthUsage": {"items": []},
+        },
+    }
     upstream.payloads[USAGE_PATH] = {
         "code": 0,
         "message": "",
@@ -99,6 +132,62 @@ def test_usage_normalises_missing_token_keys(client_for, upstream: FakeUpstream)
     assert token["inputToken"] == 0
     assert token["cacheToken"] == 0
     assert response.json["data"]["costUsage"]["totalCost"] == "0.00"
+
+
+def test_usage_suppresses_zero_usage_fields_on_package_plan(client_for, upstream: FakeUpstream) -> None:
+    """包月账号（limit>0）且 token/cost 恒 0：默认不输出这两个字段。"""
+    upstream.payloads[USAGE_PATH] = {
+        "code": 0,
+        "message": "",
+        "data": {"tokenUsage": {}, "costUsage": {}, "accountRateLimit": {"tpm": 1}, "pluginUsage": {}},
+    }
+    _, response = client_for().get("/api/v1/usage")
+
+    assert response.status == 200
+    data = response.json["data"]
+    assert "tokenUsage" not in data
+    assert "costUsage" not in data
+    assert "chart" in data
+
+
+def test_usage_fields_can_recover_suppressed_fields(client_for, upstream: FakeUpstream) -> None:
+    upstream.payloads[USAGE_PATH] = {
+        "code": 0,
+        "message": "",
+        "data": {"tokenUsage": {}, "costUsage": {}},
+    }
+    _, response = client_for().get("/api/v1/usage?fields=tokenUsage")
+
+    assert response.status == 200
+    assert "tokenUsage" in response.json["data"]
+    assert "chart" not in response.json["data"]
+
+
+def test_usage_keeps_zero_fields_for_usage_based_account(client_for, upstream: FakeUpstream) -> None:
+    upstream.payloads[TOKEN_PLAN_USAGE_PATH] = {
+        "code": 0,
+        "message": "",
+        "data": {
+            "usage": {"items": [{"name": "plan_total_token", "used": 0, "limit": 0}]},
+            "monthUsage": {"items": []},
+        },
+    }
+    upstream.payloads[USAGE_PATH] = {"code": 0, "message": "", "data": {"tokenUsage": {}, "costUsage": {}}}
+    _, response = client_for().get("/api/v1/usage")
+
+    assert response.status == 200
+    assert "tokenUsage" in response.json["data"]
+    assert "costUsage" in response.json["data"]
+
+
+def test_usage_chart_shares_trend_cache(client: SanicTestClient, upstream: FakeUpstream) -> None:
+    """chart 的按日行与 /usage/trend 共用 trend 缓存，不重复打上游。"""
+    client.get("/api/v1/usage")
+    before = upstream.count(USAGE_TREND_PATH)
+    _, response = client.get(f"/api/v1/usage/trend?year={now().year}&month={now().month}")
+
+    assert response.status == 200
+    assert upstream.count(USAGE_TREND_PATH) == before
 
 
 def test_usage_detail_sends_year_month_and_ph_query(client: SanicTestClient, upstream: FakeUpstream) -> None:
@@ -174,42 +263,6 @@ def test_usage_trend_is_cached_by_year_month(client: SanicTestClient, upstream: 
     assert upstream.count(USAGE_TREND_PATH) == 1
 
 
-def test_usage_bill_normalises_rows(client: SanicTestClient, upstream: FakeUpstream) -> None:
-    _, response = client.get("/api/v1/usage/bill")
-
-    assert response.status == 200
-    rows = response.json["data"]
-    assert rows[0]["reportMonth"] == "202608"
-    assert rows[0]["consumptionAmount"] == 10.5
-    assert rows[0]["giftConsumption"] == 1.5
-    assert rows[0]["cashConsumption"] == 9.0
-    assert upstream.count(USAGE_BILL_MONTHLY_PATH) == 1
-
-
-def test_token_plan_aggregates_three_sections(client: SanicTestClient, upstream: FakeUpstream) -> None:
-    _, response = client.get("/api/v1/token-plan")
-
-    assert response.status == 200
-    data = response.json["data"]
-    assert set(data) == {"detail", "usage", "plans"}
-    assert data["detail"]["planCode"] == "lite:year"
-    assert data["usage"]["monthUsage"]["items"][0]["name"] == "month_total_token"
-    assert data["plans"][0]["planName"] == "Lite"
-    assert response.json["meta"]["errors"] is None
-    assert upstream.count(TOKEN_PLAN_DETAIL_PATH) == 1
-    assert upstream.count(TOKEN_PLAN_USAGE_PATH) == 1
-    assert upstream.count(OPEN_TOKEN_PLAN_LIST_PATH) == 1
-
-
-def test_token_plan_reports_partial_failures(client: SanicTestClient, upstream: FakeUpstream) -> None:
-    upstream.fail_paths.add(TOKEN_PLAN_USAGE_PATH)
-    _, response = client.get("/api/v1/token-plan")
-
-    assert response.status == 200
-    assert "usage" not in response.json["data"]
-    assert response.json["meta"]["errors"]["usage"]["status"] == 502
-
-
 def test_account_aggregates_profile_balance_projects(client: SanicTestClient, upstream: FakeUpstream) -> None:
     _, response = client.get("/api/v1/account")
 
@@ -238,32 +291,59 @@ def test_account_is_cached(client: SanicTestClient, upstream: FakeUpstream) -> N
     _, second = client.get("/api/v1/account")
 
     assert second.status == 200
-    assert upstream.count("/api/v1/userProfile") == 1
+    assert upstream.count(USER_PROFILE_PATH) == 1
     assert set(second.json["meta"]["cacheState"].values()) == {"HIT"}
 
 
-def test_summary_exposes_plan_month_and_balance(client: SanicTestClient) -> None:
+def test_summary_exposes_computed_cards(client: SanicTestClient, upstream: FakeUpstream) -> None:
+    """summary 直接返回算好的卡片数值（前端零业务计算）。"""
+    set_today_trend(upstream, tokens=1000, requests=3)
     _, response = client.get("/api/v1/summary")
 
     assert response.status == 200
     data = response.json["data"]
+    cards = data["cards"]
+
     assert data["plan"]["planName"] == "Lite"
-    assert data["monthUsage"]["name"] == "month_total_token"
-    assert data["planUsage"]["limit"] == 49200000000
-    assert data["balance"]["balance"] == "0.00"
-    assert data["tokenUsage"]["totalToken"] == 150
-    assert response.json["meta"]["timezone"] == "Asia/Shanghai"
+    assert data["account"]["userId"] == PROFILE_PAYLOAD["data"]["userId"]
+    assert data["verification"]["state"] == "NOT_AUTHORIZED"
+    assert data["rateLimit"]["tpm"] == 3000000
+
+    assert cards["total"]["limit"] == 49200000000
+    assert cards["total"]["used"] == 304041752
+    assert cards["total"]["percent"] == pytest.approx(304041752 / 49200000000 * 100, abs=0.001)
+    assert cards["total"]["remaining"] == 49200000000 - 304041752
+
+    # 今日折算：800*2 + 100*100 + 100*200 = 31600 Credits
+    assert cards["today"]["credits"] == 31600
+    assert cards["today"]["dailyQuota"] > 0
+    assert cards["today"]["percent"] == pytest.approx(31600 / cards["today"]["dailyQuota"] * 100, abs=0.001)
+    assert cards["today"]["tokens"] == 1000
+    assert cards["today"]["requests"] == 3
+
+    assert cards["tokens"]["today"] == 1000
+    assert cards["tokens"]["month"] == 1000
+    assert cards["tokens"]["allTime"] == 1000
+    assert cards["tokens"]["peak"]["tokens"] == 1000
+    # 包月账号余额恒 0 → 默认不输出
+    assert "balance" not in data
+
+
+def test_summary_balance_can_be_requested(client: SanicTestClient) -> None:
+    _, response = client.get("/api/v1/summary?fields=balance")
+    assert response.status == 200
+    assert response.json["data"]["balance"]["balance"] == "0.00"
 
 
 def test_summary_shares_section_caches(client: SanicTestClient, upstream: FakeUpstream) -> None:
     client.get("/api/v1/usage")
-    client.get("/api/v1/token-plan")
     client.get("/api/v1/account")
     _, response = client.get("/api/v1/summary")
 
     assert response.status == 200
     # summary 复用同一份缓存段，不新增上游流量
     assert upstream.count(USAGE_PATH) == 1
+    assert upstream.count(TOKEN_PLAN_USAGE_PATH) == 1
     assert upstream.count(TOKEN_PLAN_DETAIL_PATH) == 1
     assert upstream.count(BALANCE_PATH) == 1
 
@@ -271,7 +351,7 @@ def test_summary_shares_section_caches(client: SanicTestClient, upstream: FakeUp
 def test_summary_validates_fields(client: SanicTestClient) -> None:
     _, response = client.get("/api/v1/summary?fields=nope")
     assert response.status == 400
-    assert "plan / monthUsage" in response.json["error"]["message"]
+    assert "plan / cards" in response.json["error"]["message"]
 
 
 def test_summary_fields_trimming(client: SanicTestClient) -> None:
@@ -280,43 +360,11 @@ def test_summary_fields_trimming(client: SanicTestClient) -> None:
     assert set(response.json["data"]) == {"plan", "balance"}
 
 
-def test_overview_returns_all_sections(client: SanicTestClient, upstream: FakeUpstream) -> None:
-    _, response = client.get("/api/v1/overview")
-
-    assert response.status == 200
-    expected = {
-        "usage", "usageDetail", "usageTrend", "usageBill", "tokenPlanDetail", "tokenPlanUsage",
-        "plans", "profile", "balance", "projects", "verification",
-    }
-    assert set(response.json["data"]) == expected
-    assert response.json["meta"]["errors"] is None
-    assert upstream.count(USAGE_PATH) == 1
-    assert upstream.count(USAGE_DETAIL_LIST_PATH) == 1
-    assert upstream.count(USAGE_TREND_PATH) == 1
-    assert upstream.count(USAGE_BILL_MONTHLY_PATH) == 1
-
-
-def test_overview_tolerates_partial_upstream_failure(client: SanicTestClient, upstream: FakeUpstream) -> None:
-    upstream.fail_paths.add(USAGE_BILL_MONTHLY_PATH)
-    _, response = client.get("/api/v1/overview")
-
-    assert response.status == 200
-    assert "usageBill" not in response.json["data"]
-    assert response.json["meta"]["errors"]["usageBill"]["type"] == "upstream_unavailable"
-
-
-def test_overview_fields_selects_sections(client: SanicTestClient, upstream: FakeUpstream) -> None:
-    _, response = client.get("/api/v1/overview?fields=usage,balance")
-
-    assert response.status == 200
-    assert set(response.json["data"]) == {"usage", "balance"}
-    assert upstream.count(TOKEN_PLAN_DETAIL_PATH) == 0
-
-
-def test_overview_rejects_unknown_sections(client: SanicTestClient) -> None:
-    _, response = client.get("/api/v1/overview?fields=bogus")
-    assert response.status == 400
-    assert "usage / usageDetail" in response.json["error"]["message"]
+def test_removed_endpoints_return_404(client: SanicTestClient) -> None:
+    for path in ("/api/v1/overview", "/api/v1/token-plan", "/api/v1/usage/bill"):
+        _, response = client.get(path)
+        assert response.status == 404, path
+        assert response.headers["content-type"].startswith("application/json")
 
 
 def test_refresh_bypasses_cache(client: SanicTestClient, upstream: FakeUpstream) -> None:
@@ -340,7 +388,8 @@ def test_refresh_is_throttled(client_for, upstream: FakeUpstream) -> None:
 
 
 def test_stale_cache_is_served_when_upstream_fails(client_for, upstream: FakeUpstream) -> None:
-    client = client_for(usage_ttl=0.05, stale_ttl=30.0, retries=0)
+    # view_ttl=0：隔离分段缓存语义（视图级 stale 见 test_view_cache_stale_fallback）
+    client = client_for(usage_ttl=0.05, stale_ttl=30.0, retries=0, view_ttl=0.0)
     assert client.get("/api/v1/usage")[1].status == 200
 
     time.sleep(0.1)
@@ -353,7 +402,7 @@ def test_stale_cache_is_served_when_upstream_fails(client_for, upstream: FakeUps
 
 def test_expired_token_is_not_papered_over_with_stale(client_for, upstream: FakeUpstream) -> None:
     """上游挂了可以拿旧值顶一会，token 过期不行。"""
-    client = client_for(usage_ttl=0.05, stale_ttl=30.0, retries=0, reauth_cooldown=0.0)
+    client = client_for(usage_ttl=0.05, stale_ttl=30.0, retries=0, reauth_cooldown=0.0, view_ttl=0.0)
     assert client.get("/api/v1/usage")[1].status == 200
 
     time.sleep(0.1)
@@ -453,15 +502,15 @@ def test_dashboard_serves_static_with_version_and_cache_control(client: SanicTes
 
 
 def test_metrics_endpoint(client: SanicTestClient) -> None:
-    client.get("/api/v1/usage")
-    client.get("/api/v1/usage")
+    client.get("/api/v1/usage/trend")
+    client.get("/api/v1/usage/trend")
     _, response = client.get("/api/v1/metrics")
 
     assert response.status == 200
     data = response.json["data"]
     assert data["cache"]["MISS"] == 1
     assert data["cache"]["HIT"] == 1
-    assert data["caches"]["usage"]["entries"] == 1
+    assert data["caches"]["detail"]["entries"] == 1
     assert "reauth" in data
 
 
@@ -509,7 +558,6 @@ def test_reauth_success_flow_via_api(client: SanicTestClient, upstream: FakeUpst
         return await original_handler(request)
 
     app = build_app(upstream)
-    # 替换 transport 的处理函数（同一 client 概念：重建 app）
     import httpx as _httpx
 
     app.ctx.client._transport = _httpx.MockTransport(handler)  # noqa: SLF001 - 测试注入

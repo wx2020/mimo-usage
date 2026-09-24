@@ -125,12 +125,13 @@ class Settings:
 
     usage_ttl: float = 300.0
     detail_ttl: float = 600.0
-    bill_ttl: float = 3600.0
     token_plan_ttl: float = 600.0
     account_ttl: float = 3600.0
     stale_ttl: float = 600.0
     cache_max_entries: int = 256
     refresh_min_interval: float = 30.0
+    #: 端点级「整响应」视图缓存 TTL（summary/usage）；<=0 关闭
+    view_ttl: float = 30.0
 
     default_usage_days: int = 7
     max_range_days: int = 366
@@ -209,12 +210,12 @@ class Settings:
             retry_backoff=fval(upstream, "retryBackoff", "MIMO_RETRY_BACKOFF", 0.3),
             usage_ttl=fval(cache, "usageTtl", "MIMO_USAGE_TTL", 300.0),
             detail_ttl=fval(cache, "detailTtl", "MIMO_DETAIL_TTL", 600.0),
-            bill_ttl=fval(cache, "billTtl", "MIMO_BILL_TTL", 3600.0),
             token_plan_ttl=fval(cache, "tokenPlanTtl", "MIMO_TOKEN_PLAN_TTL", 600.0),
             account_ttl=fval(cache, "accountTtl", "MIMO_ACCOUNT_TTL", 3600.0),
             stale_ttl=fval(cache, "staleTtl", "MIMO_STALE_TTL", 600.0),
             cache_max_entries=ival(cache, "cacheMaxEntries", "MIMO_CACHE_MAX_ENTRIES", 256),
             refresh_min_interval=fval(cache, "refreshMinInterval", "MIMO_REFRESH_MIN_INTERVAL", 30.0),
+            view_ttl=fval(cache, "viewTtl", "MIMO_VIEW_TTL", 30.0),
             default_usage_days=ival(cache, "defaultUsageDays", "MIMO_DEFAULT_USAGE_DAYS", 7),
             max_range_days=ival(cache, "maxRangeDays", "MIMO_MAX_RANGE_DAYS", 366),
             dashboard_refresh_seconds=ival(server, "dashboardRefreshSeconds", "MIMO_DASHBOARD_REFRESH_SECONDS", 30),

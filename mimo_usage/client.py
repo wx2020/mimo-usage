@@ -36,10 +36,8 @@ from .timerange import YearMonth
 USAGE_PATH = "/api/v1/usage"
 USAGE_DETAIL_LIST_PATH = "/api/v1/usage/detail/list"
 USAGE_TREND_PATH = "/api/v1/usage/token-plan/list"
-USAGE_BILL_MONTHLY_PATH = "/api/v1/usage/bill/monthly"
 TOKEN_PLAN_DETAIL_PATH = "/api/v1/tokenPlan/detail"
 TOKEN_PLAN_USAGE_PATH = "/api/v1/tokenPlan/usage"
-OPEN_TOKEN_PLAN_LIST_PATH = "/api/v1/openTokenPlan/list"
 BALANCE_PATH = "/api/v1/balance"
 USER_PROFILE_PATH = "/api/v1/userProfile"
 PROJECTS_PATH = "/api/v1/projects"
@@ -312,20 +310,11 @@ class MimoClient:
         data = await self._api("POST", USAGE_TREND_PATH, json_body=body, with_ph_query=True)
         return data if isinstance(data, list) else []
 
-    async def usage_bill_monthly(self) -> list[Any]:
-        """月账单列表（字段：reportMonth/consumptionAmount/giftConsumption/cashConsumption）。"""
-        data = await self._api("GET", USAGE_BILL_MONTHLY_PATH)
-        return data if isinstance(data, list) else []
-
     async def token_plan_detail(self) -> dict[str, Any]:
         return await self._api("GET", TOKEN_PLAN_DETAIL_PATH)
 
     async def token_plan_usage(self) -> dict[str, Any]:
         return await self._api("GET", TOKEN_PLAN_USAGE_PATH)
-
-    async def open_token_plan_list(self) -> list[Any]:
-        data = await self._api("GET", OPEN_TOKEN_PLAN_LIST_PATH)
-        return data if isinstance(data, list) else []
 
     async def balance(self) -> dict[str, Any]:
         return await self._api("GET", BALANCE_PATH)
@@ -868,7 +857,6 @@ __all__ = [
     "MimoClient",
     "MimoError",
     "MissingCredentialError",
-    "OPEN_TOKEN_PLAN_LIST_PATH",
     "PROJECTS_PATH",
     "ReauthFailed",
     "SERVICE_LOGIN_AUTH2_PATH",
@@ -876,7 +864,6 @@ __all__ = [
     "TOKEN_PLAN_DETAIL_PATH",
     "TOKEN_PLAN_USAGE_PATH",
     "USER_PROFILE_PATH",
-    "USAGE_BILL_MONTHLY_PATH",
     "USAGE_DETAIL_LIST_PATH",
     "USAGE_TREND_PATH",
     "USAGE_PATH",

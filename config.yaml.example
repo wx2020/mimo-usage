@@ -38,12 +38,15 @@ upstream:
 cache:
   usageTtl: 300
   detailTtl: 600
-  billTtl: 3600
   tokenPlanTtl: 600
   accountTtl: 3600
   staleTtl: 600
   cacheMaxEntries: 256
   refreshMinInterval: 30
+  # 端点级「整响应」视图缓存 TTL（秒）：summary/usage 命中即跳过 gather 与计算，
+  # 并据此发 Cache-Control: private, max-age=<viewTtl> 与 ETag（If-None-Match → 304）。
+  # 设 0 = 关闭视图缓存（回落到下面的分段缓存）。env MIMO_VIEW_TTL 优先于本键。
+  viewTtl: 30
   summaryMaxAge: 300
   defaultUsageDays: 7
   maxRangeDays: 366

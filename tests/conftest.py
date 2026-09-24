@@ -15,11 +15,9 @@ from mimo_usage.app import create_app
 from mimo_usage.client import (
     AUTH_VERIFICATION_PATH,
     BALANCE_PATH,
-    OPEN_TOKEN_PLAN_LIST_PATH,
     PROJECTS_PATH,
     TOKEN_PLAN_DETAIL_PATH,
     TOKEN_PLAN_USAGE_PATH,
-    USAGE_BILL_MONTHLY_PATH,
     USAGE_DETAIL_LIST_PATH,
     USAGE_PATH,
     USAGE_TREND_PATH,
@@ -105,15 +103,6 @@ USAGE_TREND_PAYLOAD: dict[str, Any] = {
     ],
 }
 
-BILL_PAYLOAD: dict[str, Any] = {
-    "code": 0,
-    "message": "",
-    "data": [
-        {"reportMonth": "202608", "consumptionAmount": "10.50", "giftConsumption": "1.50", "cashConsumption": "9.00"},
-        {"reportMonth": "202609", "consumptionAmount": "3.21", "giftConsumption": "0.21", "cashConsumption": "3.00"},
-    ],
-}
-
 TOKEN_PLAN_DETAIL_PAYLOAD: dict[str, Any] = {
     "code": 0,
     "message": "",
@@ -147,28 +136,6 @@ TOKEN_PLAN_USAGE_PAYLOAD: dict[str, Any] = {
             ],
         },
     },
-}
-
-OPEN_PLANS_PAYLOAD: dict[str, Any] = {
-    "code": 0,
-    "message": "",
-    "data": [
-        {
-            "planCode": "lite",
-            "planName": "Lite",
-            "planLevel": 1,
-            "originalPrice": "39.00",
-            "discountPrice": "34.32",
-            "planPrice": "39.00",
-            "currency": "CNY",
-            "tokenQuotaCn": "41 亿 Credits",
-            "tokenQuotaEn": "4.1 Billion Credits",
-            "periodInterval": 1,
-            "active": True,
-            "descriptionCn": "尝鲜入门",
-            "descriptionEn": "Starter Pack",
-        }
-    ],
 }
 
 BALANCE_PAYLOAD: dict[str, Any] = {
@@ -265,10 +232,8 @@ class FakeUpstream:
             USAGE_PATH: USAGE_PAYLOAD,
             USAGE_DETAIL_LIST_PATH: DETAIL_LIST_PAYLOAD,
             USAGE_TREND_PATH: USAGE_TREND_PAYLOAD,
-            USAGE_BILL_MONTHLY_PATH: BILL_PAYLOAD,
             TOKEN_PLAN_DETAIL_PATH: TOKEN_PLAN_DETAIL_PAYLOAD,
             TOKEN_PLAN_USAGE_PATH: TOKEN_PLAN_USAGE_PAYLOAD,
-            OPEN_TOKEN_PLAN_LIST_PATH: OPEN_PLANS_PAYLOAD,
             BALANCE_PATH: BALANCE_PAYLOAD,
             USER_PROFILE_PATH: PROFILE_PAYLOAD,
             PROJECTS_PATH: PROJECTS_PAYLOAD,
@@ -299,12 +264,55 @@ class FakeUpstream:
             # 续登成功后（credential 已更新）后续调用恢复正常。
             if path in self._expired_once and self._service_token(request) == "fresh-token":
                 pass  # 已续登，放行
+            if path == USAGE_TREND_PATH:
+                return self._trend(request)
             payload = self.payloads.get(path)
             if payload is None:
                 return httpx.Response(404, json={"code": 404, "message": "No static resource."})
             return httpx.Response(200, json=payload)
         finally:
             self.inflight -= 1
+
+    def _trend(self, request: httpx.Request) -> httpx.Response:
+        """usage/token-plan/list 按 body 的 year/month 过滤/聚合，模拟真实窗口语义。"""
+        import json as _json
+
+        try:
+            body = _json.loads((request.content or b"{}").decode("utf-8") or "{}")
+        except ValueError:
+            body = {}
+        year = body.get("year")
+        month = body.get("month")
+        rows = list((self.payloads.get(USAGE_TREND_PATH) or {}).get("data") or [])
+        if month is not None:
+            prefix = f"{int(year):04d}-{int(month):02d}-"
+            selected = [row for row in rows if str(row.get("date") or "").startswith(prefix)]
+            return httpx.Response(200, json={"code": 0, "message": "", "data": selected})
+        # 只给 year：按月聚合（date=YYYY-MM）
+        fields = ("totalToken", "inputHitToken", "inputMissToken", "outputToken", "inputAudioDuration")
+        agg: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in rows:
+            date = str(row.get("date") or "")
+            if not date.startswith(f"{int(year):04d}-"):
+                continue
+            key = (date[:7], row.get("model"))
+            item = agg.setdefault(
+                key,
+                {
+                    "date": date[:7],
+                    "model": row.get("model"),
+                    "totalToken": 0,
+                    "inputHitToken": 0,
+                    "inputMissToken": 0,
+                    "outputToken": 0,
+                    "requestCount": 0,
+                    "inputAudioDuration": 0,
+                },
+            )
+            for name in fields:
+                item[name] += row.get(name) or 0
+            item["requestCount"] += row.get("requestCount") or 0
+        return httpx.Response(200, json={"code": 0, "message": "", "data": list(agg.values())})
 
     async def _account(self, request: httpx.Request, path: str) -> httpx.Response:
         if path.endswith("/pass/serviceLogin"):
@@ -364,7 +372,6 @@ def make_settings(**overrides: Any) -> Settings:
         "retries": 1,
         "usage_ttl": 60.0,
         "detail_ttl": 60.0,
-        "bill_ttl": 60.0,
         "token_plan_ttl": 60.0,
         "account_ttl": 60.0,
         "reauth_cooldown": 300.0,
@@ -391,11 +398,11 @@ def make_credentials(**overrides: Any) -> CredentialStore:
 
 def build_app(upstream: FakeUpstream | None = None, **overrides: Any) -> Sanic:
     settings_keys = {
-        "access_log", "retry_backoff", "retries", "usage_ttl", "detail_ttl", "bill_ttl",
+        "access_log", "retry_backoff", "retries", "usage_ttl", "detail_ttl",
         "token_plan_ttl", "account_ttl", "stale_ttl", "cache_max_entries",
         "refresh_min_interval", "summary_max_age", "dashboard_path", "api_key",
         "reauth_cooldown", "password_reauth_cooldown", "default_usage_days",
-        "max_range_days", "debug", "request_timeout", "connect_timeout",
+        "max_range_days", "debug", "request_timeout", "connect_timeout", "view_ttl",
     }
     settings_overrides = {k: v for k, v in overrides.items() if k in settings_keys}
     settings = make_settings(**settings_overrides)

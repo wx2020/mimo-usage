@@ -62,6 +62,14 @@ def collect_commits(since: str | None) -> list[tuple[str, str]]:
     return [(sha, subj) for sha, subj in rows if not subj.startswith("chore(release):")]
 
 
+def escape_mentions(text: str) -> str:
+    """打断提交标题里的 ``@``：GitHub Release 会把正文中的 ``@xxx`` 当用户提及并
+    据此渲染 Contributors 区块，标题里偶然出现的 ``@author`` 会污染贡献者名单。
+    插入零宽空格（显示不变、不再是提及）；生成器自己追加的 ``by @<author>`` 不经过这里。
+    """
+    return text.replace("@", "@\u200b")
+
+
 def build_notes(version: str, commits: list[tuple[str, str]], author: str, curated: str = "") -> str:
     """按 1.0.0 的结构生成 notes。
 
@@ -71,7 +79,7 @@ def build_notes(version: str, commits: list[tuple[str, str]], author: str, curat
     * ``## Feature`` / ``## Bugfix``：人工归纳（由 ``--notes`` 提供），不重复提交列表
     * **不要写 ``## Contributors``**：正文有 @提及 时 GitHub 自动渲染，手写会重复
     """
-    changed = [f"* {s} ({sha}) by @{author}" for sha, s in commits] or [f"* 维护性发布 by @{author}"]
+    changed = [f"* {escape_mentions(s)} ({sha}) by @{author}" for sha, s in commits] or [f"* 维护性发布 by @{author}"]
     lines = ["## What's Changed", *changed]
     if curated.strip():
         lines += ["", curated.strip()]

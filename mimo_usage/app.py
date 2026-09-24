@@ -108,13 +108,14 @@ def create_app(
     app.ctx.caches = {
         "usage": TTLCache(settings.usage_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries),
         "detail": TTLCache(settings.detail_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries),
-        "bill": TTLCache(settings.bill_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries),
         "tokenplan": TTLCache(
             settings.token_plan_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries
         ),
         "account": TTLCache(
             settings.account_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries
         ),
+        # 端点级「整响应」视图缓存：summary/usage 命中即跳过 gather 与计算
+        "view": TTLCache(settings.view_ttl, stale_ttl=settings.stale_ttl, max_entries=settings.cache_max_entries),
     }
     app.ctx.refresh_gate = IntervalGate(settings.refresh_min_interval, max_entries=settings.cache_max_entries)
 

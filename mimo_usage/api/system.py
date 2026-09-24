@@ -17,6 +17,9 @@ async def metrics(request: Request) -> BaseHTTPResponse:
     app = request.app
     raw = app.ctx.metrics.snapshot()
     raw["caches"] = {name: cache.stats() for name, cache in app.ctx.caches.items()}
+    view_cache = app.ctx.caches.get("view")
+    if view_cache is not None:
+        raw["viewCache"] = {**raw.get("viewCache", {}), **view_cache.stats()}
     raw["reauth"] = app.ctx.client.reauth_state()
     raw["version"] = app.ctx.settings.version
 

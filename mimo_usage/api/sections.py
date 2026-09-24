@@ -1,8 +1,9 @@
-"""Single-section endpoints: thin, cached passthroughs to one upstream each."""
+"""Single-section endpoints plus the dashboard's computed ``/usage`` payload."""
 
 from __future__ import annotations
 
 import asyncio
+from datetime import date, timedelta
 from typing import Any
 
 from sanic import Request
@@ -10,6 +11,13 @@ from sanic.response import BaseHTTPResponse
 
 from .. import compat
 from ..config import Settings
+from ..insights import (
+    build_chart,
+    is_zero_cost_usage,
+    is_zero_token_usage,
+    package_plan,
+)
+from ..timerange import BadRequest, YearMonth, now
 from .blueprint import bp
 from .common import (
     aggregate,
@@ -18,10 +26,13 @@ from .common import (
     client,
     compact,
     envelope,
+    first_auth_error,
     fold_results,
     headers,
     json_response,
     sections_meta,
+    serve_computed,
+    view_key,
 )
 from .params import (
     fingerprint,
@@ -32,25 +43,105 @@ from .params import (
     select_sections,
 )
 
+#: ``/api/v1/usage`` 的顶层字段；``tokenUsage``/``costUsage`` 包月恒 0 时默认省略。
+USAGE_FIELDS = ("chart", "accountRateLimit", "pluginUsage", "tokenUsage", "costUsage")
+DEFAULT_CHART_DAYS = 30
+
 
 @bp.get("/usage")
 async def usage(request: Request) -> BaseHTTPResponse:
-    """账户维度 token/费用/限速概览（上游 GET /api/v1/usage，无时间窗参数）。"""
+    """看板用量：近 30 天 chart（后端算好）+ 账户限速/插件用量 + 原始 usage 字段。
+
+    包月账号（``tokenPlanUsage.limit > 0``）且 ``tokenUsage``/``costUsage`` 全为 0 时
+    默认不输出（``?fields=tokenUsage,costUsage`` 可点名取回）；按量账号照常输出。
+    ``chart`` 的按日行与 ``/usage/trend`` 共用 ``trend`` 缓存，不重复打上游。
+    """
     settings: Settings = request.app.ctx.settings
     fields = parse_fields(request)
+    if fields:
+        unknown = [name for name in fields if name not in USAGE_FIELDS]
+        if unknown:
+            raise BadRequest(
+                f"usage 的字段只能是 {' / '.join(USAGE_FIELDS)}，无法识别：{' / '.join(unknown)}"
+            )
+    days = _parse_days(request, settings)
     token = resolve_token(request)
-    key = ("usage", fingerprint(token))
-    data, state, extra = await _loaded(
+    ident = fingerprint(token)
+    upstream = client(request)
+    reference = now()
+    today = reference.date()
+    windows = _months(today - timedelta(days=days - 1), today)
+
+    specs: list[tuple[str, str, tuple[Any, ...], Any]] = [
+        ("usage", "usage", ("usage", ident), _norm(upstream.usage, compat.normalise_usage)),
+        (
+            "plan",
+            "tokenplan",
+            ("tokenplan", "usage", ident),
+            _norm(upstream.token_plan_usage, compat.normalise_token_plan_usage),
+        ),
+    ]
+    for window in windows:
+        specs.append(
+            (
+                f"trend:{window.label()}",
+                "detail",
+                ("trend", ident, *window.key),
+                _norm(lambda w=window: upstream.usage_trend_list(w), compat.normalise_usage_trend),
+            )
+        )
+
+    async def compute() -> tuple[dict[str, Any], int, dict[str, str], bool]:
+        results = await asyncio.gather(
+            *(cached(request, cache_name, key, loader) for _, cache_name, key, loader in specs),
+            return_exceptions=True,
+        )
+        sections, errors, states = fold_results(
+            tuple(zip((name for name, *_ in specs), results, strict=True))
+        )
+
+        forced = first_auth_error(errors)
+        if forced is not None:
+            error_body = {"error": {"type": forced["type"], "message": forced["message"]}}
+            return error_body, forced["status"], states, False
+
+        rows: list[Any] = []
+        for name, *_ in specs:
+            if name.startswith("trend:"):
+                rows.extend(sections.get(name) or [])
+
+        usage_data = compat.as_dict(sections.get("usage"))
+        data: dict[str, Any] = {
+            "chart": build_chart(rows, days=days, today=today),
+            "accountRateLimit": usage_data.get("accountRateLimit"),
+            "pluginUsage": usage_data.get("pluginUsage"),
+            "tokenUsage": usage_data.get("tokenUsage"),
+            "costUsage": usage_data.get("costUsage"),
+        }
+        # 包月账号 + 恒 0：默认省略；?fields= 点名取回
+        if package_plan(compat.as_dict(sections.get("plan"))):
+            for name, is_zero in (
+                ("tokenUsage", is_zero_token_usage(data["tokenUsage"])),
+                ("costUsage", is_zero_cost_usage(data["costUsage"])),
+            ):
+                if is_zero and name not in fields:
+                    data.pop(name)
+
+        data = compact(**data)
+        narrowed, ignored = select_fields(data, fields)
+        if fields and not narrowed:
+            raise BadRequest(f"fields 没有匹配到任何字段：{', '.join(ignored)}")
+
+        meta_entries = [(cache_name, key) for name, cache_name, key, _ in specs if name in states]
+        body = aggregate(narrowed, errors, states, **sections_meta(request, meta_entries))
+        cacheable = not errors and bool(sections)
+        return body, (200 if sections else 502), states, cacheable
+
+    return await serve_computed(
         request,
-        "usage",
-        key,
-        _norm(client(request).usage, compat.normalise_usage),
-        fields,
-        settings.usage_ttl,
-    )
-    return json_response(
-        envelope(data, state, settings.usage_ttl, **extra),
-        headers=headers(state, settings.usage_ttl),
+        view_key("usage", ident, days=days, fields=fields),
+        compute,
+        settings.view_ttl,
     )
 
 
@@ -84,6 +175,7 @@ async def usage_detail(request: Request) -> BaseHTTPResponse:
 async def usage_trend(request: Request) -> BaseHTTPResponse:
     """Token Plan 用量统计：每日 × 每模型 Token 明细（上游 usage/token-plan/list）。
 
+    保留为**原始行入口**（不在 ``/usage`` 的 ``chart`` 里重复提供 ``dailyUsage``）。
     与 ``/usage/detail`` 同窗口参数（``?year=&month=``，缓存键含年月稳定）。
     """
     settings: Settings = request.app.ctx.settings
@@ -102,65 +194,6 @@ async def usage_trend(request: Request) -> BaseHTTPResponse:
     return json_response(
         envelope(data, state, settings.detail_ttl, range=window.as_dict(), **extra),
         headers=headers(state, settings.detail_ttl),
-    )
-
-
-@bp.get("/usage/bill")
-async def usage_bill(request: Request) -> BaseHTTPResponse:
-    """月账单列表（上游 GET usage/bill/monthly）。"""
-    settings: Settings = request.app.ctx.settings
-    fields = parse_fields(request)
-    token = resolve_token(request)
-    key = ("bill", fingerprint(token))
-    data, state, extra = await _loaded(
-        request,
-        "bill",
-        key,
-        _norm(client(request).usage_bill_monthly, compat.normalise_bill_monthly),
-        fields,
-        settings.bill_ttl,
-    )
-    return json_response(
-        envelope(data, state, settings.bill_ttl, **extra),
-        headers=headers(state, settings.bill_ttl),
-    )
-
-
-@bp.get("/token-plan")
-async def token_plan(request: Request) -> BaseHTTPResponse:
-    """订阅详情 + 额度用量 + 可购套餐，三段并发聚合。"""
-    token = resolve_token(request)
-    ident = fingerprint(token)
-    upstream = client(request)
-    loaders = {
-        "detail": upstream.token_plan_detail,
-        "usage": upstream.token_plan_usage,
-        "plans": upstream.open_token_plan_list,
-    }
-    normalisers = {
-        "detail": compat.normalise_token_plan_detail,
-        "usage": compat.normalise_token_plan_usage,
-        "plans": compat.normalise_open_plans,
-    }
-    keys = {name: ("tokenplan", name, ident) for name in loaders}
-    names = select_sections(parse_fields(request), loaders)
-    results = await asyncio.gather(
-        *(
-            cached(request, "tokenplan", keys[name], _norm(loaders[name], normalisers[name]))
-            for name in names
-        ),
-        return_exceptions=True,
-    )
-    sections, errors, states = fold_results(tuple(zip(names, results, strict=True)))
-    return json_response(
-        aggregate(
-            sections,
-            errors,
-            states,
-            **sections_meta(request, [("tokenplan", keys[name]) for name in states]),
-        ),
-        headers={"X-Cache": cache_header(states)},
-        status=200 if sections else 502,
     )
 
 
@@ -211,6 +244,32 @@ def _norm(loader: Any, normaliser: Any) -> Any:
     return run
 
 
+def _parse_days(request: Request, settings: Settings) -> int:
+    raw = request.get_args().get("days")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_CHART_DAYS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise BadRequest(f"days 必须是整数，收到 {raw!r}") from None
+    if value < 1:
+        raise BadRequest("days 必须大于 0")
+    return min(value, settings.max_range_days)
+
+
+def _months(start: date, end: date) -> list[YearMonth]:
+    """[start, end] 覆盖到的自然月列表（含端点）。"""
+    windows: list[YearMonth] = []
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month):
+        windows.append(YearMonth(year=year, month=month))
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return windows
+
+
 async def _loaded(
     request: Request,
     cache_name: str,
@@ -222,8 +281,6 @@ async def _loaded(
     data, state = await cached(request, cache_name, key, loader)
     narrowed, ignored = select_fields(data, fields)
     if fields and not narrowed:
-        from ..timerange import BadRequest
-
         raise BadRequest(f"fields 没有匹配到任何字段：{', '.join(ignored)}")
     age = request.app.ctx.caches[cache_name].age(key)
     return narrowed, state, compact(
