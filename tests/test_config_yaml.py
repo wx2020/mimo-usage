@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import stat
+from pathlib import Path
 
 import bcrypt
 import pytest
@@ -186,6 +188,45 @@ def test_yaml_store_set_is_atomic_and_preserves_sections(tmp_path) -> None:
     raw = cfg.read_text(encoding="utf-8")
     assert "port: 8000" in raw
     assert not list(tmp_path.glob(".*.tmp"))  # 临时文件已替换
+
+
+def test_yaml_store_falls_back_to_inplace_write_when_rename_busy(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """单文件 bind mount：rename 覆盖挂载点报 EBUSY → 退化原地写且不报错。"""
+    cfg = tmp_path / "config.yaml"
+    write_config(cfg, 'credentials:\n  serviceToken: old-tok\n')
+    store = YamlStore(cfg)
+
+    def busy(self: Path, target: Path) -> None:  # noqa: ARG001
+        raise OSError(errno.EBUSY, "Device or resource busy", str(self), str(target))
+
+    monkeypatch.setattr(Path, "replace", busy)
+    store.set("credentials.serviceToken", "rotated")
+
+    assert store.get("credentials.serviceToken") == "rotated"
+    assert "rotated" in cfg.read_text(encoding="utf-8")
+    assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+    assert not list(tmp_path.glob(".*.tmp"))  # 临时文件已清理
+
+
+def test_persist_session_survives_store_write_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """落盘失败（如只读挂载）不应让续登/请求抛错：内存值仍可用。"""
+    cfg = tmp_path / "config.yaml"
+    write_config(cfg, 'credentials:\n  serviceToken: old-tok\n')
+    creds = CredentialStore.from_env(str(cfg))
+
+    def boom(self: YamlStore) -> None:
+        self._dirty = True  # 与真实 _save 一致：失败标记内存新于磁盘
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(YamlStore, "_save", boom)
+    creds.persist_session(service_token="new-tok", user_id="42")  # 不抛异常
+
+    assert creds.service_token.get() == "new-tok"
+    assert creds.user_id.get() == "42"
 
 
 def test_credentials_from_env_without_yaml_still_works(monkeypatch: pytest.MonkeyPatch) -> None:

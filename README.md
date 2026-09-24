@@ -72,6 +72,10 @@ docker run -d --name mimo-usage -p 8000:8000 mimo-usage
   docker run -d --name mimo-usage -p 8000:8000 -v "$PWD/config.yaml:/app/config.yaml" mimo-usage
   ```
 
+  单文件挂载（`-v 文件:文件`）会把容器内目标变成挂载点，无法被原子 rename 覆盖；
+  服务已自动退化为主机可写的原地写回，因此单文件与目录挂载都可用。
+  更稳妥的是挂载整个目录：`-v "$PWD:/config" -e MIMO_CONFIG=/config/config.yaml`。
+
 - 也可全部用环境变量（`MIMO_SERVICE_TOKEN` 等，优先级高于 yaml），无需挂载配置文件。
 
 打开 <http://127.0.0.1:8000/dashboard>；API 示例：

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import time
@@ -231,7 +232,7 @@ class Settings:
 class YamlStore:
     """config.yaml 的凭据段读写：mtime 热载 + 原子写回（0600）。"""
 
-    __slots__ = ("path", "_data", "_mtime", "_checked_at")
+    __slots__ = ("path", "_data", "_mtime", "_checked_at", "_dirty")
 
     CHECK_INTERVAL = 1.0
 
@@ -240,9 +241,12 @@ class YamlStore:
         self._data: dict[str, Any] = {}
         self._mtime: float | None = None
         self._checked_at = 0.0
+        self._dirty = False  # 上次写盘失败、内存值新于磁盘
 
     def _load(self, *, force: bool = False) -> dict[str, Any]:
         now = time.monotonic()
+        if self._dirty:
+            return self._data  # 有未落盘改动：别用磁盘把内存覆盖掉
         if not force and self._mtime is not None and now - self._checked_at < self.CHECK_INTERVAL:
             return self._data
         self._checked_at = now
@@ -311,9 +315,23 @@ class YamlStore:
     def _save(self) -> None:
         text = yaml.safe_dump(self._data, allow_unicode=True, sort_keys=False, default_flow_style=False)
         tmp = self.path.parent / f".{self.path.name}.tmp"
-        tmp.write_text(text, encoding="utf-8")
-        tmp.chmod(0o600)  # 内含凭据：写回后文件必须是 600
-        tmp.replace(self.path)
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            tmp.chmod(0o600)  # 内含凭据：写回后文件必须是 600
+            try:
+                tmp.replace(self.path)
+            except OSError:
+                # 单文件 bind mount（容器 ``-v ./config.yaml:/app/config.yaml``）会把
+                # 目标变成挂载点，rename 覆盖挂载点被内核拒绝（EBUSY/EXDEV）→ 原地写。
+                # 失去原子性但能写穿到宿主真实文件；普通文件仍走上面的原子路径。
+                self.path.write_text(text, encoding="utf-8")
+                self.path.chmod(0o600)
+        except OSError:
+            self._dirty = True  # 落盘失败：保留内存值，别让后续 _load(force) 用磁盘覆盖
+            raise
+        finally:
+            tmp.unlink(missing_ok=True)
+        self._dirty = False
         self._mtime = None  # 强制下次 stat 重读
 
     def migrate_password(self, plaintext_env: str | None = None) -> bool:
@@ -441,7 +459,10 @@ class _Secret:
         """
         value = (value or "").strip()
         if self._store is not None and self._store_key:
-            self._store.set(self._store_key, value)
+            # 落盘失败（如只读挂载）不该让整次续登/请求报错：新值已进 store 内存，
+            # 本进程内立即可用，仅失去持久化（下次重启再续登一次）。
+            with contextlib.suppress(OSError):
+                self._store.set(self._store_key, value)
             return
         if self._path is not None:
             try:
