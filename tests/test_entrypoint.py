@@ -20,7 +20,7 @@ def test_server_module_exports_app() -> None:
 def test_package_version() -> None:
     import mimo_usage
 
-    assert mimo_usage.__version__ == "1.1.1"
+    assert mimo_usage.__version__ == "2.0.0"
 
 
 def test_create_app_is_importable() -> None:
