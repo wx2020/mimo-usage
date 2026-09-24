@@ -24,7 +24,7 @@ APP_NAME = "mimo_usage"
 DASHBOARD_COOKIE = "mimo_usage_key"
 DASHBOARD_COOKIE_MAX_AGE = 30 * 24 * 3600
 #: 静态资源版本号：与 __version__ 同步，配合 ?v= 让改版立即生效
-STATIC_VERSION = "1.1.0"  # 静态资源缓存键（改静态资源后同步 bump；发版时随版本号刷新）
+STATIC_VERSION = "1.1.1"  # 静态资源缓存键（改静态资源后同步 bump；发版时随版本号刷新）
 
 #: 未授权时给「浏览器导航」看的引导页。
 #: API 客户端与静态资源仍返回泛化 JSON（不把认证方式喂给扫描器）；
